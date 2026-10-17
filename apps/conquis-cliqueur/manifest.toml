@@ -1,0 +1,9 @@
+manifest_version = 1
+id          = "com.moi.conquis-cliqueur"
+name        = "Conquis Cliqueur"
+version     = "1.2.0"
+arch        = "aarch64"
+exec        = "bin/conquis-cliqueur"
+icon        = "icon.png"
+# display : écran | storage : /data | gpu : OpenGL ES (partage le réseau) | audio | network | files | system | install
+permissions = ["display", "storage", "gpu", "audio", "files"]

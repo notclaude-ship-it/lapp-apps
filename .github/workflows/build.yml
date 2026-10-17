@@ -1,0 +1,65 @@
+name: Compiler et publier les apps
+
+# Un push sur main compile les apps modifiées (sur le PC, runner auto-hébergé) et les publie sur le store.
+# Une pull request compile seulement, sans rien publier.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/**'
+      - 'lapp-sdk/**'
+      - 'scripts/**'
+      - '.github/workflows/**'
+  pull_request:
+    paths:
+      - 'apps/**'
+      - 'lapp-sdk/**'
+      - 'scripts/**'
+  workflow_dispatch:
+    inputs:
+      app:
+        description: "Dossier d'une app à publier (vide = toutes)"
+        required: false
+        default: ''
+
+concurrency:
+  group: lapp-build
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: [self-hosted, lapp]
+    timeout-minutes: 60
+    # Le runner est le PC : on ne construit jamais le code d'un fork.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          clean: false   # garde les dossiers target/ : compilations incrémentales
+
+      - name: Apps à reconstruire
+        id: apps
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          ONLY: ${{ github.event.inputs.app }}
+        run: |
+          list="$(scripts/changed-apps.sh "$BASE" "$ONLY")"
+          echo "Apps : ${list:-aucune}"
+          {
+            echo 'list<<EOF'
+            echo "$list"
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Compiler et publier
+        if: steps.apps.outputs.list != ''
+        env:
+          LAPP_STORE_TOKEN: ${{ secrets.LAPP_STORE_TOKEN }}
+          STORE_URL: ${{ vars.STORE_URL || 'http://127.0.0.1:10079' }}
+          PUBLISH: ${{ github.event_name == 'pull_request' && '0' || '1' }}
+          APPS: ${{ steps.apps.outputs.list }}
+        run: scripts/publish.sh $APPS
