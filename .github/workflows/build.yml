@@ -1,7 +1,7 @@
 name: Compiler et publier les apps
 
-# Un push sur main compile les apps modifiées (sur le PC, runner auto-hébergé) et les publie sur le store.
-# Une pull request compile seulement, sans rien publier.
+# Un push sur main compile les apps modifiées sur les serveurs GitHub, puis les envoie au store
+# (le PC signe le paquet avec sa clé). Une pull request compile seulement, sans rien publier.
 on:
   push:
     branches: [main]
@@ -31,15 +31,14 @@ permissions:
 
 jobs:
   build:
-    runs-on: [self-hosted, lapp]
+    runs-on: ubuntu-latest
     timeout-minutes: 60
-    # Le runner est le PC : on ne construit jamais le code d'un fork.
+    # Les secrets ne sont pas fournis aux forks : on ne construit que les PR du dépôt lui-même.
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          clean: false   # garde les dossiers target/ : compilations incrémentales
 
       - name: Apps à reconstruire
         id: apps
@@ -55,11 +54,29 @@ jobs:
             echo 'EOF'
           } >> "$GITHUB_OUTPUT"
 
+      - name: Chaîne de compilation aarch64
+        if: steps.apps.outputs.list != ''
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq gcc-aarch64-linux-gnu
+          rustup target add aarch64-unknown-linux-gnu
+
+      - name: Cache cargo
+        if: steps.apps.outputs.list != ''
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            apps/*/target
+          key: lapp-${{ runner.os }}-${{ hashFiles('apps/*/Cargo.lock', 'lapp-sdk/**/*.rs') }}
+          restore-keys: lapp-${{ runner.os }}-
+
       - name: Compiler et publier
         if: steps.apps.outputs.list != ''
         env:
           LAPP_STORE_TOKEN: ${{ secrets.LAPP_STORE_TOKEN }}
-          STORE_URL: ${{ vars.STORE_URL || 'http://127.0.0.1:10079' }}
+          STORE_URL: ${{ vars.STORE_URL }}
           PUBLISH: ${{ github.event_name == 'pull_request' && '0' || '1' }}
           APPS: ${{ steps.apps.outputs.list }}
         run: scripts/publish.sh $APPS

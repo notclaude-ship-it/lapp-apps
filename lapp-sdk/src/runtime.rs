@@ -453,7 +453,7 @@ impl<A: App> Runner<A> {
             }
         };
         let ctx = nc.make_current(&surface).ok()?;
-        let _ = surface.set_swap_interval(&ctx, SwapInterval::Wait(NonZeroU32::new(1).unwrap()));
+        let _ = surface.set_swap_interval(&ctx, SwapInterval::DontWait);
         let gl = unsafe { glow::Context::from_loader_function_cstr(|s| display.get_proc_address(s)) };
         let g = match GlGfx::new(gl) {
             Ok(g) => g,

@@ -3,8 +3,7 @@
 // - Échap (ou bouton ≡ en haut à droite) : menu (Reprendre / Entrer un code / Quitter)
 // - Code BUG  : vidéo plein écran, impossible à fermer avant la fin.
 // - Code TUNE : interface secrète qui demande un 2e code
-//     INFINI -> château en or      (clics et production ×4 pour toujours)
-//     DIAMEN -> château en diamant (clics et production ×1000 pour toujours)
+//     INFINI -> or ×4 · DIAMEN -> diamant ×1000 · NETHERITE -> noir ×10000 (pour toujours)
 // - Onglet Magie : sorts (mana) et améliorations magiques à débloquer.
 // - Boutique infinie : 8 unités puis des « Dimensions » sans fin.
 //
@@ -53,6 +52,22 @@ static MAGIC: [MagicDef; 8] = [
     MagicDef { id: "grimoire", name: "Grimoire ancien", spell: false, cost: 50_000_000.0, req: 25_000_000.0, mana: 0.0, dur: 0.0, desc: "Toute la production ×2" },
 ];
 
+// (nom, territoires conquis requis, multiplicateur) : s'ajoute au multiplicateur du château
+static GRADES: [(&str, f64, f64); 12] = [
+    ("Paysan", 0.0, 1.0),
+    ("Écuyer", 1e3, 1.1),
+    ("Chevalier", 1e5, 1.25),
+    ("Baron", 1e7, 1.5),
+    ("Comte", 1e9, 2.0),
+    ("Duc", 1e11, 3.0),
+    ("Prince", 1e13, 5.0),
+    ("Roi", 1e15, 8.0),
+    ("Empereur", 1e18, 15.0),
+    ("Demi-dieu", 1e21, 30.0),
+    ("Dieu", 1e25, 75.0),
+    ("Éternel", 1e30, 200.0),
+];
+
 fn make_tiers() -> Vec<Tier> {
     let fixed: [(&str, f64, f64); 8] = [
         ("Éclaireur", 15.0, 0.1),
@@ -90,6 +105,18 @@ fn fmt(n: f64) -> String {
     }
 }
 
+/// Comme fmt mais sans zéros inutiles : 10.00M -> 10M
+fn fmt_short(n: f64) -> String {
+    let s = fmt(n);
+    let split = s.find(|c: char| c.is_alphabetic()).unwrap_or(s.len());
+    let (num, suf) = s.split_at(split);
+    if num.contains('.') {
+        format!("{}{}", num.trim_end_matches('0').trim_end_matches('.'), suf)
+    } else {
+        s
+    }
+}
+
 fn fmt_rate(n: f64) -> String {
     if n < 100.0 {
         format!("{:.1}", n)
@@ -104,6 +131,7 @@ enum Screen {
     Menu,
     Code,
     Tune,
+    Settings,
     Video,
 }
 
@@ -149,6 +177,11 @@ struct Conquis {
     floats: Vec<Floater>,
     pop: f32,
     pending_toast: Option<String>,
+    fps_on: bool,
+    fps_frames: u32,
+    fps_t: Instant,
+    fps_val: f32,
+    last_grade: usize,
     sound: Option<audio::Sound>,
     sound_wait: f32,
 }
@@ -191,10 +224,16 @@ impl Conquis {
             floats: Vec::new(),
             pop: 0.0,
             pending_toast: None,
+            fps_on: false,
+            fps_frames: 0,
+            fps_t: Instant::now(),
+            fps_val: 0.0,
+            last_grade: 0,
             sound: None,
             sound_wait: 0.0,
         };
         app.load();
+        app.last_grade = app.grade_idx();
         app
     }
 
@@ -213,13 +252,14 @@ impl Conquis {
                 self.owned[i] = n.parse().unwrap_or(0);
             }
         }
-        self.skin = next().parse::<u8>().unwrap_or(0).min(2);
+        self.skin = next().parse::<u8>().unwrap_or(0).min(3);
         self.mana = next().parse().unwrap_or(0.0);
         for (i, c) in next().chars().enumerate() {
             if i < self.mg.len() {
                 self.mg[i] = c == '1';
             }
         }
+        self.fps_on = next() == "1";
         let away = (now_secs() - saved_at).clamp(0.0, OFFLINE_CAP);
         let gain = self.rate() * away;
         if gain >= 1.0 && away > 30.0 {
@@ -233,8 +273,8 @@ impl Conquis {
         let owned = self.owned.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(",");
         let mg: String = self.mg.iter().map(|b| if *b { '1' } else { '0' }).collect();
         let s = format!(
-            "{};{};{};{};{};{};{};{};{}",
-            self.pts, self.total, self.click_lvl, self.clicks, now_secs(), owned, self.skin, self.mana, mg
+            "{};{};{};{};{};{};{};{};{};{}",
+            self.pts, self.total, self.click_lvl, self.clicks, now_secs(), owned, self.skin, self.mana, mg, if self.fps_on { 1 } else { 0 }
         );
         let _ = self.store.set("state", s);
     }
@@ -243,12 +283,22 @@ impl Conquis {
     fn has(&self, id: &str) -> bool {
         MAGIC.iter().position(|m| m.id == id).map_or(false, |i| self.mg[i])
     }
-    fn perm_mult(&self) -> f64 {
+    /// Multiplicateur du château : pierre ×1, or ×4, diamant ×1000, netherite ×10000.
+    fn skin_mult(&self) -> f64 {
         match self.skin {
+            3 => 10_000.0,
             2 => 1000.0,
             1 => 4.0,
             _ => 1.0,
         }
+    }
+    /// Grade actuel d'après le total de territoires conquis.
+    fn grade_idx(&self) -> usize {
+        GRADES.iter().rposition(|g| self.total >= g.1).unwrap_or(0)
+    }
+    /// Multiplicateur total permanent (château × grade).
+    fn perm_mult(&self) -> f64 {
+        self.skin_mult() * GRADES[self.grade_idx()].2
     }
     fn prod_mult(&self) -> f64 {
         let mut m = self.perm_mult();
@@ -298,7 +348,7 @@ impl Conquis {
         let shop_top = (h * 0.50).round();
         let tab_h = 32.0 * s;
         let list_top = shop_top + tab_h + if self.tab == Tab::Magic { 26.0 * s } else { 0.0 };
-        let zone_top = head_h + 74.0 * s;
+        let zone_top = head_h + 90.0 * s;
         let zone_h = shop_top - zone_top;
         let r = (zone_h / 2.0 - 6.0 * s).min(62.0 * s).max(20.0 * s);
         Layout {
@@ -429,23 +479,24 @@ impl Conquis {
                 }
             }
             Screen::Tune => {
-                if code == "INFINI" {
-                    if self.skin >= 1 {
-                        ctx.toast(if self.skin == 2 { "Tu as déjà le diamant (×1000)" } else { "Le château est déjà en or" });
+                let target = match code.as_str() {
+                    "INFINI" => Some(1u8),
+                    "DIAMEN" => Some(2),
+                    "NETHERITE" => Some(3),
+                    _ => None,
+                };
+                if let Some(k) = target {
+                    if self.skin >= k {
+                        ctx.toast(if self.skin == k { "Ce château est déjà actif" } else { "Tu as déjà un château plus puissant" });
                     } else {
-                        self.skin = 1;
+                        self.skin = k;
                         self.save();
                         self.screen = Screen::Game;
-                        ctx.toast("Château en or ! Clics et production ×4 pour toujours");
-                    }
-                } else if code == "DIAMEN" {
-                    if self.skin == 2 {
-                        ctx.toast("Le château est déjà en diamant");
-                    } else {
-                        self.skin = 2;
-                        self.save();
-                        self.screen = Screen::Game;
-                        ctx.toast("Château en diamant ! ×1000 pour toujours");
+                        ctx.toast(match k {
+                            1 => "Château en or ! ×4 pour toujours",
+                            2 => "Château en diamant ! ×1000 pour toujours",
+                            _ => "Château en netherite ! ×10000 pour toujours",
+                        });
                     }
                 } else if code.is_empty() {
                     ctx.toast("Entre le 2e code");
@@ -485,24 +536,28 @@ impl Conquis {
     }
 
     // ---- menu ----------------------------------------------------------------------------
-    fn menu_buttons(&self, ctx: &Ctx) -> (Rect, [Rect; 3]) {
+    fn menu_buttons(&self, ctx: &Ctx) -> (Rect, [Rect; 4]) {
         let s = ctx.scale();
         let (w, h) = (ctx.width(), ctx.height());
         let pw = w * 0.82;
-        let bh = 46.0 * s;
-        let gap = 12.0 * s;
-        let ph = 56.0 * s + 3.0 * bh + 2.0 * gap + 16.0 * s;
+        let bh = 44.0 * s;
+        let gap = 10.0 * s;
+        let ph = 56.0 * s + 4.0 * bh + 3.0 * gap + 16.0 * s;
         let px = (w - pw) / 2.0;
         let py = (h - ph) / 2.0;
         let bx = px + 16.0 * s;
         let bw = pw - 32.0 * s;
         let y0 = py + 56.0 * s;
-        let b = [
-            Rect::new(bx, y0, bw, bh),
-            Rect::new(bx, y0 + bh + gap, bw, bh),
-            Rect::new(bx, y0 + 2.0 * (bh + gap), bw, bh),
-        ];
+        let mut b = [Rect::new(0.0, 0.0, 0.0, 0.0); 4];
+        for (i, r) in b.iter_mut().enumerate() {
+            *r = Rect::new(bx, y0 + i as f32 * (bh + gap), bw, bh);
+        }
         (Rect::new(px, py, pw, ph), b)
+    }
+
+    fn settings_row(&self, ctx: &Ctx) -> Rect {
+        let s = ctx.scale();
+        Rect::new(0.0, 44.0 * s + 16.0 * s, ctx.width(), 60.0 * s)
     }
 
     // ---- lignes de liste -----------------------------------------------------------------
@@ -547,6 +602,7 @@ impl Conquis {
 
     fn skin_colors(&self) -> (Color, Color, Color, Color) {
         match self.skin {
+            3 => (rgb(0x0B0B0E), rgb(0x1C1C22), rgb(0x5A5A66), rgb(0xD1A54B)),
             2 => (rgb(0x2A9FC0), rgb(0xB9F2FF), rgb(0x17607A), rgb(0xE9FBFF)),
             1 => (rgb(0xB8860B), rgb(0xF2C94C), rgb(0x6B4F0A), rgb(0xF2C94C)),
             _ => (rgb(0x5B5F68), rgb(0xA3A7B0), rgb(0x454850), rgb(0xC5C8CF)),
@@ -590,13 +646,28 @@ impl Conquis {
         let big = Text::new(30.0 * s).bold().color(t.text).center().max_width(w - 24.0 * s);
         ctx.text_mid(g, &fmt(self.pts), w / 2.0, head.height + 20.0 * s, &big);
         ctx.text_mid(g, "territoires conquis", w / 2.0, head.height + 41.0 * s, &Text::new(12.0 * s).color(t.subtext).center());
-        let mult = if self.perm_mult() > 1.0 { format!(" · ×{}", self.perm_mult()) } else { String::new() };
+        let mult = if self.skin_mult() > 1.0 { format!(" · ×{}", self.skin_mult()) } else { String::new() };
         ctx.text_mid(
             g,
             &format!("{} par seconde{}", fmt_rate(self.rate()), mult),
             w / 2.0,
             head.height + 58.0 * s,
             &Text::new(13.0 * s).bold().color(t.accent).center(),
+        );
+
+        // grade
+        let gi = self.grade_idx();
+        let gr = &GRADES[gi];
+        let next = match GRADES.get(gi + 1) {
+            Some(n) => format!(" · suivant : {} ({})", n.0, fmt_short(n.1)),
+            None => " · grade maximum".to_string(),
+        };
+        ctx.text_mid(
+            g,
+            &format!("{} ×{}{}", gr.0, gr.2, next),
+            w / 2.0,
+            head.height + 75.0 * s,
+            &Text::new(11.0 * s).bold().color(rgb(0x7C4DFF)).center().max_width(w - 12.0 * s),
         );
 
         // gros bouton
@@ -607,6 +678,11 @@ impl Conquis {
         g.circle(l.cx, l.cy, r, outer);
         g.circle(l.cx, l.cy, r * 0.9, inner);
         draw_castle(g, l.cx, l.cy, r * 1.2, body, door);
+        if self.skin == 3 {
+            g.circle(l.cx - r * 0.45, l.cy - r * 0.5, r * 0.08, rgba(0xD1A54B, 0.8));
+            g.circle(l.cx + r * 0.5, l.cy - r * 0.25, r * 0.06, rgba(0x9B5AFF, 0.8));
+            g.circle(l.cx + r * 0.2, l.cy + r * 0.62, r * 0.05, rgba(0xD1A54B, 0.7));
+        }
         if self.skin == 2 {
             g.circle(l.cx - r * 0.45, l.cy - r * 0.5, r * 0.12, rgba(0xFFFFFF, 0.8));
             g.circle(l.cx + r * 0.5, l.cy - r * 0.2, r * 0.07, rgba(0xFFFFFF, 0.7));
@@ -683,7 +759,22 @@ impl Conquis {
         ctx.text_mid(g, "Menu", w / 2.0, panel.y + 28.0 * s, &Text::new(20.0 * s).bold().color(t.text).center());
         ui::button(ctx, g, b[0], "Reprendre", ButtonStyle::Primary, false);
         ui::button(ctx, g, b[1], "Entrer un code", ButtonStyle::Secondary, false);
-        ui::button(ctx, g, b[2], "Quitter", ButtonStyle::Danger, false);
+        ui::button(ctx, g, b[2], "Paramètres", ButtonStyle::Secondary, false);
+        ui::button(ctx, g, b[3], "Quitter", ButtonStyle::Danger, false);
+    }
+
+    fn draw_settings(&mut self, ctx: &Ctx, g: &mut Gfx) {
+        let t = ctx.theme;
+        let s = ctx.scale();
+        let w = ctx.width();
+        g.clear(t.bg);
+        ui::header(ctx, g, "Paramètres", Some("Retour"));
+        let r = self.settings_row(ctx);
+        g.rect(r.x, r.y, r.w, r.h, t.surface);
+        g.rect(r.x, r.bottom() - 1.0, r.w, 1.0, t.line);
+        ctx.text_mid(g, "Compteur de FPS", 14.0 * s, r.y + r.h * 0.34, &Text::new(16.0 * s).bold().color(t.text).left());
+        ctx.text_mid(g, "Affiche les FPS en bas à gauche", 14.0 * s, r.y + r.h * 0.70, &Text::new(11.0 * s).color(t.subtext).left().max_width(w - 90.0 * s));
+        ui::toggle(ctx, g, Rect::new(w - 62.0 * s, r.y + r.h / 2.0 - 14.0 * s, 48.0 * s, 28.0 * s), self.fps_on);
     }
 
     fn draw_video(&mut self, ctx: &Ctx, g: &mut Gfx) {
@@ -724,7 +815,22 @@ impl App for Conquis {
             Screen::Game => self.draw_game(ctx, g),
             Screen::Menu => self.draw_menu(ctx, g),
             Screen::Code | Screen::Tune => self.draw_code(ctx, g),
+            Screen::Settings => self.draw_settings(ctx, g),
             Screen::Video => self.draw_video(ctx, g),
+        }
+        if self.fps_on {
+            self.fps_frames += 1;
+            let e = self.fps_t.elapsed().as_secs_f32();
+            if e >= 0.5 {
+                self.fps_val = self.fps_frames as f32 / e;
+                self.fps_frames = 0;
+                self.fps_t = Instant::now();
+            }
+            let s = ctx.scale();
+            let label = if self.fps_val > 0.0 { format!("{:.0} FPS", self.fps_val) } else { "-- FPS".to_string() };
+            let fy = ctx.height() - 21.0 * s;
+            g.rrect(4.0 * s, fy, 62.0 * s, 17.0 * s, 5.0 * s, rgba(0x000000, 0.72));
+            ctx.text_mid(g, &label, 4.0 * s + 31.0 * s, fy + 8.5 * s, &Text::new(11.0 * s).mono().bold().color(rgb(0x7CFC8A)).center());
         }
     }
 
@@ -732,6 +838,9 @@ impl App for Conquis {
         let now = Instant::now();
         let real = (now - self.last).as_secs_f32().min(3600.0);
         self.last = now;
+        if self.fps_on {
+            ctx.animate(); // image en continu pour que le compteur soit réel
+        }
         if self.screen == Screen::Video {
             ctx.animate();
             // l'image attend que le son soit prêt (1,5 s au plus) pour partir avec lui
@@ -756,6 +865,11 @@ impl App for Conquis {
         self.mana = (self.mana + self.mana_regen() * real).min(self.max_mana());
         self.frenzy_left = (self.frenzy_left - real).max(0.0);
         self.bless_left = (self.bless_left - real).max(0.0);
+        let gi = self.grade_idx();
+        if gi > self.last_grade {
+            ctx.toast(format!("Nouveau grade : {} ! ×{}", GRADES[gi].0, GRADES[gi].2));
+        }
+        self.last_grade = gi;
         self.since_save += real;
         if self.since_save > 5.0 {
             self.since_save = 0.0;
@@ -794,6 +908,7 @@ impl App for Conquis {
                 self.code.clear();
                 self.screen = Screen::Code;
             }
+            Screen::Settings => self.screen = Screen::Menu,
             Screen::Video => {} // impossible de fermer la vidéo
         }
         true
@@ -847,8 +962,24 @@ impl App for Conquis {
                         self.code.clear();
                         self.screen = Screen::Code;
                     } else if b[2].contains(x, y) {
+                        self.screen = Screen::Settings;
+                    } else if b[3].contains(x, y) {
                         self.save();
                         ctx.exit();
+                    }
+                }
+            }
+            Screen::Settings => {
+                if let Event::Tap { x, y } = ev {
+                    if y < 44.0 * ctx.scale() && x < ctx.width() * 0.32 {
+                        self.screen = Screen::Menu;
+                    } else if self.settings_row(ctx).contains(x, y) {
+                        self.fps_on = !self.fps_on;
+                        self.fps_val = 0.0;
+                        self.fps_frames = 0;
+                        self.fps_t = Instant::now();
+                        self.save();
+                        ctx.animate();
                     }
                 }
             }
@@ -907,12 +1038,17 @@ fn main() {
             app.owned[i] = 3 + i as u32;
         }
     }
+    if arg_flag("--fps") {
+        app.fps_on = true;
+        app.fps_val = 60.0;
+    }
     if let Some(k) = arg_value("--skin").and_then(|v| v.parse::<u8>().ok()) {
-        app.skin = k.min(2);
+        app.skin = k.min(3);
     }
     match arg_value("--page").as_deref() {
         Some("menu") => app.screen = Screen::Menu,
         Some("magic") => app.tab = Tab::Magic,
+        Some("settings") => app.screen = Screen::Settings,
         Some("code") => {
             app.screen = Screen::Code;
             app.code = "BU".into();

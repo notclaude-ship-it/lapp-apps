@@ -6,7 +6,12 @@ Jeu cliqueur infini.
 - Code **BUG** : vidéo en plein écran, impossible de la fermer avant la fin.
 - Code **TUNE** : ouvre l'interface secrète, qui demande un 2e code :
   - **INFINI** : château en or, clics et production ×4 pour toujours ;
-  - **DIAMEN** : château en diamant, clics et production ×1000 pour toujours.
+  - **DIAMEN** : château en diamant, ×1000 pour toujours ;
+  - **NETHERITE** : château noir, ×10000 pour toujours.
+  Un château moins puissant ne remplace jamais un plus puissant.
+- **Grades** : plus tu as conquis de territoires au total, plus ton grade est haut (Paysan -> Éternel, 12 grades)
+  et plus tu as un multiplicateur en plus de celui du château.
+- **Paramètres** (menu) : compteur de FPS activable / désactivable.
 - Onglet **Magie** : sorts (Frénésie, Pluie d'or, Bénédiction) et améliorations à débloquer.
   Le mana se remplit tout seul ; pour en avoir plus : Réservoir de mana I (+50 max),
   Réservoir de mana II (+100 max), Source arcanique (mana 2× plus vite).
@@ -14,8 +19,8 @@ Jeu cliqueur infini.
 ## Compiler et installer (sur ta machine, avec le SDK lapp déjà en place)
 
     cd conquis-cliqueur
-    ../lapp-sdk/tools/lapp-build                 # produit com.moi.conquis-cliqueur-1.2.0.lapp
-    sudo ~/lapp/target/release/lapp install com.moi.conquis-cliqueur-1.2.0.lapp
+    ../lapp-sdk/tools/lapp-build                 # produit com.moi.conquis-cliqueur-1.0.0.lapp
+    sudo ~/lapp/target/release/lapp install com.moi.conquis-cliqueur-1.0.0.lapp
 
 Prérequis : `rustup target add aarch64-unknown-linux-gnu`, `gcc-aarch64-linux-gnu`,
 le binaire `lapp` et la clé `~/.lapp/dev.key` (voir le README du SDK).
@@ -23,7 +28,7 @@ le binaire `lapp` et la clé `~/.lapp/dev.key` (voir le README du SDK).
 ## Tester sur PC
 
     LAPP_DATA=/tmp/d cargo run
-    cargo run -- --screenshot out.png --page menu|code|tune|video|magic [--vt 8] [--skin 1|2] [--demo]
+    cargo run -- --screenshot out.png --page menu|code|tune|video|magic|settings [--vt 8] [--skin 1|2|3] [--fps] [--demo]
 
 ## Notes
 - La vidéo est rejouée image par image (assets/frames, 6 images/s, 272 px de large) : le SDK n'a pas de lecteur vidéo ni de son.
