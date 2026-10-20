@@ -1,12 +1,98 @@
+use lapp_sdk::audio::AudioOut;
 use lapp_sdk::prelude::*;
 use std::fs;
+use std::path::{Path, PathBuf};
 use std::process::Child;
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::Arc;
+use std::thread;
+
+const ST_PLAYING: u8 = 0;
+const ST_DONE: u8 = 1;
+const ST_ERROR: u8 = 2;
+
+/// Lecture d'un WAV dans un fil : decodage (hound) puis envoi PCM au serveur audio
+/// PulseAudio / PipeWire de l'hote (AudioOut). `aplay` n'est plus utilise : sur l'appareil il n'y a
+/// pas de carte ALSA directe, seulement le serveur de son.
+struct Player {
+    stop: Arc<AtomicBool>,
+    state: Arc<AtomicU8>,
+}
+
+impl Player {
+    fn start(path: PathBuf) -> Player {
+        let stop = Arc::new(AtomicBool::new(false));
+        let state = Arc::new(AtomicU8::new(ST_PLAYING));
+        let (stop2, state2) = (stop.clone(), state.clone());
+        thread::spawn(move || {
+            let res = play_wav(&path, &stop2);
+            if let Err(e) = &res {
+                eprintln!("Amen Breaks : {e}");
+            }
+            state2.store(if res.is_ok() { ST_DONE } else { ST_ERROR }, Ordering::Relaxed);
+        });
+        Player { stop, state }
+    }
+}
+
+impl Drop for Player {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+    }
+}
+
+fn load_wav(path: &Path) -> Result<(u32, u8, Vec<i16>), String> {
+    let mut r = hound::WavReader::open(path).map_err(|e| format!("WAV illisible : {e}"))?;
+    let spec = r.spec();
+    if spec.channels == 0 || spec.channels > 2 {
+        return Err(format!("{} canaux non pris en charge", spec.channels));
+    }
+    let bits = spec.bits_per_sample;
+    let samples: Vec<i16> = match (spec.sample_format, bits) {
+        (hound::SampleFormat::Float, _) => r
+            .samples::<f32>()
+            .map(|s| s.map(|v| (v.clamp(-1.0, 1.0) * 32767.0) as i16))
+            .collect::<Result<_, _>>(),
+        (hound::SampleFormat::Int, 8) => r
+            .samples::<i8>()
+            .map(|s| s.map(|v| (v as i16) << 8))
+            .collect::<Result<_, _>>(),
+        (hound::SampleFormat::Int, 16) => r.samples::<i16>().collect::<Result<_, _>>(),
+        (hound::SampleFormat::Int, 24) | (hound::SampleFormat::Int, 32) => r
+            .samples::<i32>()
+            .map(|s| s.map(|v| (v >> (bits - 16)) as i16))
+            .collect::<Result<_, _>>(),
+        _ => return Err(format!("WAV {bits} bits non pris en charge")),
+    }
+    .map_err(|e| format!("WAV illisible : {e}"))?;
+    Ok((spec.sample_rate, spec.channels as u8, samples))
+}
+
+fn play_wav(path: &Path, stop: &AtomicBool) -> Result<(), String> {
+    let (rate, ch, data) = load_wav(path)?;
+    let mut out = AudioOut::new("Amen Breaks", rate, ch).latency_ms(100);
+    let chunk = ((rate as usize / 10) * ch as usize).max(ch as usize);
+    for part in data.chunks(chunk) {
+        if stop.load(Ordering::Relaxed) {
+            out.flush();
+            return Ok(());
+        }
+        if !out.write(part) {
+            return Err("sortie audio indisponible (serveur PulseAudio/PipeWire injoignable)".into());
+        }
+    }
+    if !stop.load(Ordering::Relaxed) {
+        out.drain();
+    }
+    Ok(())
+}
 
 struct AmenApp {
     files: Vec<String>,
     scroll: Scroller,
     playing_file: Option<String>,
-    child: Option<Child>,
+    player: Option<Player>,
+    child: Option<Child>, // repli pour les fichiers non WAV (mp3)
 }
 
 impl AmenApp {
@@ -34,16 +120,30 @@ impl AmenApp {
             files,
             scroll: Scroller::new(),
             playing_file: None,
+            player: None,
             child: None,
         }
     }
 
-    fn play(&mut self, name: &str) {
+    fn stop_playback(&mut self) {
+        self.player = None; // Drop : demande l'arret du fil de lecture
         if let Some(mut old) = self.child.take() {
             let _ = old.kill();
         }
+    }
+
+    fn play(&mut self, name: &str) {
+        self.stop_playback();
         let full_path = lapp_sdk::app_path(&format!("assets/{}", name));
-        self.child = lapp_sdk::audio::play_file(&full_path);
+        let is_wav = full_path
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| e.eq_ignore_ascii_case("wav"));
+        if is_wav {
+            self.player = Some(Player::start(full_path));
+        } else {
+            self.child = lapp_sdk::audio::play_file(&full_path);
+        }
         self.playing_file = Some(name.to_string());
     }
 }
@@ -58,6 +158,19 @@ impl App for AmenApp {
                 self.child = None;
                 self.playing_file = None;
             }
+        }
+        let st = self.player.as_ref().map(|p| p.state.load(Ordering::Relaxed));
+        match st {
+            Some(ST_DONE) => {
+                self.player = None;
+                self.playing_file = None;
+            }
+            Some(ST_ERROR) => {
+                self.player = None;
+                self.playing_file = None;
+                ctx.toast("Lecture impossible (voir les logs)".to_string());
+            }
+            _ => {}
         }
     }
 
@@ -116,12 +229,9 @@ impl App for AmenApp {
 
 impl Drop for AmenApp {
     fn drop(&mut self) {
-        if let Some(mut child) = self.child.take() {
-            let _ = child.kill();
-        }
+        self.stop_playback();
     }
 }
 
 fn main() {
     run(Config::new("Amen Breaks"), AmenApp::new());
-}
