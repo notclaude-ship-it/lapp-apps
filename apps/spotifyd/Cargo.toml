@@ -1,0 +1,17 @@
+[package]
+name = "spotifyd"
+version = "1.0.0"
+edition = "2021"
+build = "build.rs"
+
+[dependencies]
+lapp-sdk = { path = "../../lapp-sdk" }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[workspace]

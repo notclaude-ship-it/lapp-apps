@@ -1,0 +1,8 @@
+manifest_version = 1
+id          = "com.moi.spotifyd"
+name        = "Spotify"
+version     = "1.0.0"
+arch        = "aarch64"
+exec        = "bin/spotifyd"
+icon        = "icon.png"
+permissions = ["display", "system", "storage"]
