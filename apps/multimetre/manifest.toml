@@ -1,7 +1,7 @@
 manifest_version = 1
 id          = "com.moi.multimetre"
 name        = "Multimètre"
-version     = "1.0.0"
+version     = "1.0.1"
 arch        = "aarch64"
 exec        = "bin/multimetre"
 icon        = "icon.png"
