@@ -1,0 +1,8 @@
+manifest_version = 1
+id          = "com.moi.amen-breaks"
+name        = "Amen Breaks"
+version     = "1.0.0"
+arch        = "aarch64"
+exec        = "bin/amen-breaks"
+icon        = "icon.png"
+permissions = ["display", "storage", "audio", "gpu"]
