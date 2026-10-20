@@ -1,0 +1,51 @@
+@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Space+Grotesk:wght@400;600;700&display=swap');
+:root{--red:#ff3b4e;--green:#b4ffcf;--bg:#08090b}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;background:radial-gradient(ellipse at 50% 20%,#201015 0%,#090a0d 50%,#030405 100%);color:#e8e8e8;font-family:'Share Tech Mono',monospace;display:grid;place-items:center;padding:24px;overflow-x:hidden}
+.grain{pointer-events:none;position:fixed;inset:0;opacity:.09;background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.45'/%3E%3C/svg%3E")}
+.shell{width:min(760px,100%);border:1px solid #3a2026;background:rgba(8,10,12,.92);box-shadow:0 0 60px #6b101a22,inset 0 0 40px #ff33440a;padding:clamp(18px,5vw,42px);position:relative}
+header,footer{font-size:11px;letter-spacing:.12em;color:#a4a4a4}
+header{border-bottom:1px solid #302126;padding-bottom:14px}
+.dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--red);margin-right:8px;box-shadow:0 0 12px var(--red)}
+.right{float:right}
+.hero{text-align:center;padding:44px 0 34px}
+.eyebrow{color:var(--red);font-size:11px;letter-spacing:.28em}
+h1{font-family:'Space Grotesk',sans-serif;font-size:clamp(44px,10vw,84px);line-height:1;margin:12px 0;letter-spacing:-.06em;text-shadow:0 0 22px #ff334433}
+.sub{color:#aaa;font-family:'Space Grotesk',sans-serif}
+.blink{color:var(--red);animation:blink 1s steps(2,start) infinite}
+.screen{border:1px solid #34383b;background:linear-gradient(140deg,#111619,#090b0d);padding:18px;min-height:210px}
+.screen-top{display:flex;justify-content:space-between;color:#8b9993;font-size:11px;border-bottom:1px solid #26312b;padding-bottom:10px}
+#status{color:var(--green)}
+.log{min-height:125px;padding-top:10px;color:var(--green);font-size:13px;line-height:1.7}
+.log p{margin:4px 0;animation:appear .3s ease-out}
+.log .warning{color:var(--red);text-shadow:0 0 8px #ff334455}
+.log .muted{color:#727c77}
+.meter{height:3px;background:#242729;margin-top:8px}
+.meter span{display:block;width:4%;height:100%;background:var(--red);transition:width 1.2s ease;box-shadow:0 0 12px var(--red)}
+.controls{display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin:24px 0}
+button{font-family:inherit;letter-spacing:.08em;font-size:12px;padding:15px 18px;border:1px solid var(--red);background:var(--red);color:#12090b;cursor:pointer;transition:transform .15s,box-shadow .15s}
+button:hover{transform:translateY(-2px);box-shadow:0 0 22px #ff3b4e44}
+button:focus-visible{outline:2px solid white;outline-offset:4px}
+button.secondary{background:transparent;color:#b4b4b4;border-color:#444}
+.hint{text-align:center;color:#777;font-size:11px;line-height:1.6;margin:20px 0 36px}
+footer{text-align:center;color:#59605d;font-size:9px;letter-spacing:.1em}
+body.active .shell{animation:throb 2.5s ease-in-out infinite}
+.jumpscare{position:fixed;inset:0;z-index:10;display:none;place-items:center;overflow:hidden;background:#050000}
+.jumpscare.show{display:grid;animation:scare-in .16s steps(2,end) both}
+.close-scare{position:absolute;right:18px;top:18px;z-index:2;background:#111;color:#fff;border:1px solid #777;padding:10px 14px}
+.scare-face{position:relative;width:min(75vw,440px);height:min(75vw,440px);border-radius:48% 48% 42% 42%;background:radial-gradient(ellipse at 50% 40%,#d8c9b6 0%,#8b8178 38%,#34282a 70%,#090708 100%);box-shadow:0 0 70px #ff001c66;transform:scale(1.05);animation:face-jolt .28s steps(2,end) infinite alternate}
+.hair{position:absolute;inset:-8% -7% 46%;background:#090709;clip-path:polygon(0 0,100% 0,93% 50%,80% 26%,71% 65%,56% 30%,42% 67%,25% 28%,12% 57%);filter:drop-shadow(0 0 12px #000)}
+.eyes{position:absolute;top:34%;left:13%;right:13%;display:flex;justify-content:space-between}
+.eyes i{width:31%;height:36px;background:#090507;border-radius:50%;box-shadow:0 0 18px #ff001c;transform:rotate(-8deg)}
+.eyes i:last-child{transform:rotate(8deg)}
+.nose{position:absolute;top:43%;left:43%;width:14%;height:18%;background:#2b2021;clip-path:polygon(50% 0,0 100%,100% 100%);opacity:.8}
+.mouth{position:absolute;left:25%;right:25%;bottom:12%;height:25%;background:#120407;border:3px solid #4a2529;border-radius:10% 10% 48% 48%;display:flex;gap:3px;justify-content:center;align-items:flex-start;padding:5px;overflow:hidden}
+.mouth span{display:block;width:16%;height:35%;background:#ded5c7;clip-path:polygon(0 0,100% 0,50% 100%)}
+.mouth span:nth-child(even){transform:rotate(180deg);align-self:flex-end}
+.scare-text{position:absolute;bottom:5%;margin:0;color:#ff263c;font-size:clamp(18px,4vw,32px);letter-spacing:.18em;text-shadow:0 0 18px red;text-align:center}
+@keyframes blink{to{visibility:hidden}}
+@keyframes appear{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
+@keyframes throb{50%{box-shadow:0 0 70px #8b122033,inset 0 0 50px #ff33440c}}
+@keyframes scare-in{0%{filter:brightness(5)}100%{filter:brightness(1)}}
+@keyframes face-jolt{from{transform:scale(1.03) rotate(-1deg)}to{transform:scale(1.1) rotate(1deg)}}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
