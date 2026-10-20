@@ -18,7 +18,7 @@ enum Block {
 impl Block {
     fn color(&self) -> Color {
         match self {
-            Block::Air => rgba(0, 0),
+            Block::Air => rgba(0, 0.0),
             Block::Grass => rgb(0x48A121),
             Block::Dirt => rgb(0x795548),
             Block::Stone => rgb(0x757575),
