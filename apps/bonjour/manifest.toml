@@ -1,0 +1,8 @@
+manifest_version = 1
+id          = "com.moi.bonjour"
+name        = "Bonjour"
+version     = "1.0.0"
+arch        = "aarch64"
+exec        = "bin/bonjour"
+icon        = "icon.png"
+permissions = ["display"]
