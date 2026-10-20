@@ -3,16 +3,20 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const PURPLE: Color = rgb(0x6750A4);
-const PURPLE_CONTAINER: Color = rgb(0xE9DDFF);
-const ON_PURPLE_CONTAINER: Color = rgb(0x22005D);
-const BG: Color = rgb(0xFFFBFF);
-const SURFACE_CARD: Color = rgb(0xF3EDF7);
-const TEXT_MAIN: Color = rgb(0x1C1B1E);
-const TEXT_MUTED: Color = rgb(0x49454E);
-const BORDER_COLOR: Color = rgb(0xCCCCD4);
-const GREEN_OK: Color = rgb(0x2E7D32);
-const RED_DEL: Color = rgb(0xBA1A1A);
+const fn c_rgb(hex: u32) -> Color {
+    Color::from_rgba8((hex >> 16) as u8, (hex >> 8) as u8, hex as u8, 255)
+}
+
+const PURPLE: Color = c_rgb(0x6750A4);
+const PURPLE_CONTAINER: Color = c_rgb(0xE9DDFF);
+const ON_PURPLE_CONTAINER: Color = c_rgb(0x22005D);
+const BG: Color = c_rgb(0xFFFBFF);
+const SURFACE_CARD: Color = c_rgb(0xF3EDF7);
+const TEXT_MAIN: Color = c_rgb(0x1C1B1E);
+const TEXT_MUTED: Color = c_rgb(0x49454E);
+const BORDER_COLOR: Color = c_rgb(0xCCCCD4);
+const GREEN_OK: Color = c_rgb(0x2E7D32);
+const RED_DEL: Color = c_rgb(0xBA1A1A);
 
 #[derive(Clone, Serialize, Deserialize)]
 struct Item {
@@ -165,17 +169,14 @@ impl App for ChecklistPhotoApp {
                 let st_title = Text::new(20.0 * s).bold().color(rgb(0xFFFFFF)).left();
                 ctx.text_mid(g, "Checklist Photo", 16.0 * s, hdr_h / 2.0, &st_title);
 
-                let mut content_h = 20.0 * s;
-                for item in &self.items {
-                    content_h += 108.0 * s;
-                }
+                let mut content_h = 20.0 * s + self.items.len() as f32 * 108.0 * s;
                 content_h += 70.0 * s + 30.0 * s;
                 self.scroller.set_content(content_h, h - hdr_h);
 
                 let start_y = hdr_h + 16.0 * s - self.scroller.pos;
                 let mut cur_y = start_y;
 
-                for (i, item) in self.items.iter().enumerate() {
+                for item in &self.items {
                     let card_r = Rect::new(14.0 * s, cur_y, w - 28.0 * s, 96.0 * s);
                     g.rrect(card_r.x, card_r.y + 1.5 * s, card_r.w, card_r.h, 16.0 * s, rgba(0, 0.06));
                     g.rrect(card_r.x, card_r.y, card_r.w, card_r.h, 16.0 * s, SURFACE_CARD);
@@ -349,7 +350,7 @@ impl App for ChecklistPhotoApp {
                     }
                     SessionPhase::Checklist => {
                         let steps = self.items.get(*item_idx).map(|it| &it.steps[..]).unwrap_or(&[]);
-                        let mut content_h = steps.len() as f32 * 60.0 * s + 80.0 * s;
+                        let content_h = steps.len() as f32 * 60.0 * s + 80.0 * s;
                         self.scroller.set_content(content_h, h - content_top - 60.0 * s);
 
                         let mut cur_y = content_top + 14.0 * s - self.scroller.pos;
