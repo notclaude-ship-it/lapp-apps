@@ -5665,14 +5665,11 @@ impl App for Conquis {
                 self.fps_val = self.fps_frames as f32 / self.fps_t.elapsed().as_secs_f32().max(0.01);
             }
             let probing = self.fps_cycle < 0.3;
-            ctx.unlimited_fps(probing);
             if probing {
                 ctx.animate();
             } else {
                 ctx.redraw_in(Duration::from_millis(250));
             }
-        } else {
-            ctx.unlimited_fps(false);
         }
         self.clock = now_secs();
         self.slow_t += real;
