@@ -1,20 +1,17 @@
 use lapp_sdk::prelude::*;
-use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink};
 use std::fs;
-use std::io::BufReader;
+use std::path::Path;
+use std::process::Child;
 
 struct AmenApp {
     files: Vec<String>,
     scroll: Scroller,
     playing_file: Option<String>,
-    _stream: Option<OutputStream>,
-    stream_handle: Option<OutputStreamHandle>,
-    sink: Option<Sink>,
+    child: Option<Child>,
 }
 
 impl AmenApp {
     fn new() -> Self {
-        let (_stream, stream_handle) = OutputStream::try_default().ok().map(|(s, h)| (Some(s), Some(h))).unwrap_or((None, None));
         let mut files = Vec::new();
 
         if let Ok(entries) = fs::read_dir(lapp_sdk::app_dir()) {
@@ -38,26 +35,16 @@ impl AmenApp {
             files,
             scroll: Scroller::new(),
             playing_file: None,
-            _stream,
-            stream_handle,
-            sink: None,
+            child: None,
         }
     }
 
     fn play(&mut self, name: &str) {
-        if let Some(ref handle) = self.stream_handle {
-            let full_path = lapp_sdk::app_path(name);
-            if let Ok(file) = fs::File::open(&full_path) {
-                if let Ok(source) = Decoder::new(BufReader::new(file)) {
-                    if let Ok(sink) = Sink::try_new(handle) {
-                        sink.append(source);
-                        self.sink = Some(sink);
-                        self.playing_file = Some(name.to_string());
-                        return;
-                    }
-                }
-            }
+        if let Some(mut old) = self.child.take() {
+            let _ = old.kill();
         }
+        let full_path = lapp_sdk::app_path(name);
+        self.child = play_audio(&full_path);
         self.playing_file = Some(name.to_string());
     }
 }
@@ -67,8 +54,9 @@ impl App for AmenApp {
         if self.scroll.update(dt) {
             ctx.animate();
         }
-        if let Some(ref sink) = self.sink {
-            if sink.empty() && self.playing_file.is_some() {
+        if let Some(ref mut child) = self.child {
+            if let Ok(Some(_)) = child.try_wait() {
+                self.child = None;
                 self.playing_file = None;
             }
         }
@@ -123,6 +111,46 @@ impl App for AmenApp {
                 }
             }
             _ => {}
+        }
+    }
+}
+
+fn play_audio(path: &Path) -> Option<Child> {
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+    let players: &[(&str, &[&str])] = if ext == "wav" {
+        &[
+            ("aplay", &["-q"]),
+            ("pw-play", &[]),
+            ("paplay", &[]),
+            ("mpv", &["--no-video", "--really-quiet"]),
+            ("play", &["-q"]),
+            ("ffplay", &["-nodisp", "-autoexit", "-loglevel", "quiet"]),
+        ]
+    } else {
+        &[
+            ("pw-play", &[]),
+            ("paplay", &[]),
+            ("mpv", &["--no-video", "--really-quiet"]),
+            ("play", &["-q"]),
+            ("ffplay", &["-nodisp", "-autoexit", "-loglevel", "quiet"]),
+            ("aplay", &["-q"]),
+        ]
+    };
+
+    for &(cmd, args) in players {
+        let mut c = std::process::Command::new(cmd);
+        c.args(args).arg(path);
+        if let Ok(child) = c.spawn() {
+            return Some(child);
+        }
+    }
+    None
+}
+
+impl Drop for AmenApp {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.child.take() {
+            let _ = child.kill();
         }
     }
 }
