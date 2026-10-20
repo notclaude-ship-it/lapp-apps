@@ -3,20 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const fn c_rgb(hex: u32) -> Color {
-    Color::from_rgba8((hex >> 16) as u8, (hex >> 8) as u8, hex as u8, 255)
-}
 
-const PURPLE: Color = c_rgb(0x6750A4);
-const PURPLE_CONTAINER: Color = c_rgb(0xE9DDFF);
-const ON_PURPLE_CONTAINER: Color = c_rgb(0x22005D);
-const BG: Color = c_rgb(0xFFFBFF);
-const SURFACE_CARD: Color = c_rgb(0xF3EDF7);
-const TEXT_MAIN: Color = c_rgb(0x1C1B1E);
-const TEXT_MUTED: Color = c_rgb(0x49454E);
-const BORDER_COLOR: Color = c_rgb(0xCCCCD4);
-const GREEN_OK: Color = c_rgb(0x2E7D32);
-const RED_DEL: Color = c_rgb(0xBA1A1A);
 
 #[derive(Clone, Serialize, Deserialize)]
 struct Item {
@@ -156,7 +143,19 @@ impl App for ChecklistPhotoApp {
         }
     }
 
+    #[allow(non_snake_case)]
     fn render(&mut self, ctx: &Ctx, g: &mut Gfx) {
+        let PURPLE = rgb(0x6750A4);
+        let PURPLE_CONTAINER = rgb(0xE9DDFF);
+        let ON_PURPLE_CONTAINER = rgb(0x22005D);
+        let BG = rgb(0xFFFBFF);
+        let SURFACE_CARD = rgb(0xF3EDF7);
+        let TEXT_MAIN = rgb(0x1C1B1E);
+        let TEXT_MUTED = rgb(0x49454E);
+        let BORDER_COLOR = rgb(0xCCCCD4);
+        let GREEN_OK = rgb(0x2E7D32);
+        let RED_DEL = rgb(0xBA1A1A);
+
         g.clear(BG);
         let s = ctx.scale();
         let w = ctx.width();
