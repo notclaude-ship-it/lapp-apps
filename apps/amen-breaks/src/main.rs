@@ -14,7 +14,7 @@ impl AmenApp {
     fn new() -> Self {
         let mut files = Vec::new();
 
-        if let Ok(entries) = fs::read_dir(lapp_sdk::app_dir()) {
+        if let Ok(entries) = fs::read_dir(lapp_sdk::app_path("assets")) {
             for entry in entries.flatten() {
                 let path = entry.path();
                 if path.is_file() {
@@ -43,7 +43,7 @@ impl AmenApp {
         if let Some(mut old) = self.child.take() {
             let _ = old.kill();
         }
-        let full_path = lapp_sdk::app_path(name);
+        let full_path = lapp_sdk::app_path(&format!("assets/{}", name));
         self.child = play_audio(&full_path);
         self.playing_file = Some(name.to_string());
     }
