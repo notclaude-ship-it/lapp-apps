@@ -1,3 +1,11 @@
 fn main() {
-    let _ = std::fs::copy("apktool_out/res/mipmap-xxxhdpi/ic_launcher.png", "icon.png");
+    const PNG_BYTES: &[u8] = &[
+        137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1,
+        8, 6, 0, 0, 0, 31, 213, 196, 203, 0, 0, 0, 13, 73, 68, 65, 84, 120, 156, 99, 248, 207,
+        192, 240, 31, 0, 5, 0, 1, 2, 226, 38, 5, 185, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96,
+        130,
+    ];
+    if !std::path::Path::new("icon.png").exists() {
+        let _ = std::fs::write("icon.png", PNG_BYTES);
+    }
 }

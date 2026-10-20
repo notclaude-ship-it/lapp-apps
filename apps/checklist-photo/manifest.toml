@@ -4,5 +4,5 @@ name        = "Checklist Photo"
 version     = "1.0.0"
 arch        = "aarch64"
 exec        = "bin/checklist-photo"
-icon        = "apktool_out/res/mipmap-xxxhdpi/ic_launcher.png"
+icon        = "icon.png"
 permissions = ["display", "storage", "gpu"]
