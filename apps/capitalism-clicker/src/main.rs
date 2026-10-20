@@ -176,6 +176,11 @@ impl Capi {
                 self.g.money = 0.0;
                 self.cheat_t = 5.0;
             }
+            "anticheat" => {
+                self.clear_pop();
+                self.g.money = 999999.0;
+                self.anticheat_t = 5.0;
+            }
             _ => { ctx.toast("Code invalide"); return; }
         }
         self.scr = Scr::Game;
@@ -356,6 +361,9 @@ impl Capi {
         // code "cheat" : gros texte
         if self.cheat_t > 0.0 {
             self.overlay(ctx, g, "cheat", None, &[("uncle sam", 34.0, 0xFF3030), ("is", 34.0, 0xFF3030), ("desapointed", 34.0, 0xFF3030)], self.cheat_t, 5.0);
+        }
+        if self.anticheat_t > 0.0 {
+            self.overlay(ctx, g, "cheat", None, &[("uncle sam", 34.0, 0xFF3030), ("is", 34.0, 0xFF3030), ("proud", 34.0, 0xFF3030)], self.cheat_t, 5.0);
         }
         self.tax_banner(ctx, g);
     }
