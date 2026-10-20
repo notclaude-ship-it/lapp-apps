@@ -10,23 +10,45 @@ fn fill(g: &mut Gfx, r: Rect, c: Color) { g.rect(r.x, r.y, r.w, r.h, c) }
 fn rfill(g: &mut Gfx, r: Rect, rad: f32, c: Color) { g.rrect(r.x, r.y, r.w, r.h, rad, c) }
 fn disc(g: &mut Gfx, x: f32, y: f32, rad: f32, c: Color) { g.circle(x, y, rad, c) }
 fn gsize(g: &Gfx) -> (f32, f32) { let (w, h) = g.size(); (w as f32, h as f32) }
-fn img(p: &str) -> Option<Pixmap> { lapp_sdk::load_png(p) }
+fn img(p: &str) -> Option<Pixmap> { load_png(p).into_iter().next() }
 fn new_scroller() -> Scroller { Scroller::new() }
 fn sget(st: &Store, k: &str) -> Option<String> { st.get(k).map(|s| s.to_string()) }
 fn sset(st: &mut Store, k: &str, v: &str) { let _ = st.set(k, v); }
 fn sdel(st: &mut Store, k: &str) { let _ = st.remove(k); }
 // =====================================================================================
 
-const UP: [(&str, f64, f64); 9] = [
-    ("Free labour", 15.0, 0.2), ("Salarié", 120.0, 1.5), ("Entreprise", 1100.0, 10.0),
-    ("Méga entreprise", 12e3, 80.0), ("Big Corp", 130e3, 700.0), ("Giga Corp", 1.4e6, 6.5e3),
-    ("Téra Corp", 20e6, 60e3), ("Planet Inc.", 330e6, 600e3), ("Galaxy Ltd.", 5.1e9, 6e6),
+// Nombre d'ameliorations
+const N: usize = 11;
+// (nom, cout de base, gain par seconde)
+const UP: [(&str, f64, f64); N] = [
+    ("Free labour", 15.0, 0.2), ("Salarié", 120.0, 1.5), ("Scam", 400.0, 4.0),
+    ("Entreprise", 1100.0, 10.0), ("Méga entreprise", 12e3, 80.0), ("Trading", 50e3, 300.0),
+    ("Big Corp", 130e3, 700.0), ("Giga Corp", 1.4e6, 6.5e3), ("Téra Corp", 20e6, 60e3),
+    ("Planet Inc.", 330e6, 600e3), ("Galaxy Ltd.", 5.1e9, 6e6),
 ];
+// Anciennes sauvegardes (9 ameliorations) -> nouvelle position de chaque amelioration
+const OLD_MAP: [usize; 9] = [0, 1, 3, 4, 6, 7, 8, 9, 10];
 const STAGES: [(f64, &str, u32); 8] = [
     (0.0, "Pièce", 0xFFC800), (1e2, "Billet", 0x3FA34D), (1e4, "Liasse", 0x2E7D32),
     (1e6, "Mallette", 0x8D5A2B), (1e8, "Coffre", 0x707B85), (1e10, "Compte", 0x1E6FD9),
     (1e13, "Stocks", 0x8E44AD), (1e16, "Empire", 0xD4A017),
 ];
+// Images du code "random" (la derniere, le drapeau de l'URSS, sert aussi a Stalin / Lenin)
+const PICS: [&str; 8] = [
+    "assets/rand0.png", "assets/rand1.png", "assets/rand2.png", "assets/rand3.png",
+    "assets/rand4.png", "assets/rand5.png", "assets/rand6.png", "assets/ussr.png",
+];
+const FLAG: usize = 7;
+// Clavier AZERTY ('<' = effacer)
+const KEYS: [&str; 3] = ["AZERTYUIOP", "QSDFGHJKLM", "WXCVBN<"];
+
+fn key_list() -> Vec<(char, usize, usize)> {
+    let mut v = vec![];
+    for (r, row) in KEYS.iter().enumerate() {
+        for (c, ch) in row.chars().enumerate() { v.push((ch, r, c)); }
+    }
+    v
+}
 
 fn fmt(v: f64) -> String {
     const S: [&str; 12] = ["", "K", "M", "B", "T", "Qa", "Qi", "Sx", "Sp", "Oc", "No", "Dc"];
@@ -39,13 +61,13 @@ fn fmt(v: f64) -> String {
 fn t(s: f32, c: Color) -> Text { Text::new(s).bold().color(c).center() }
 
 #[derive(PartialEq, Clone, Copy)]
-enum Scr { Title, Saves, Game, Codes, Random }
+enum Scr { Title, Saves, Game, Menu, Code, Random }
 
 #[derive(Clone)]
-struct Game { money: f64, total: f64, mult: f64, used: u8, lv: [u32; 9] }
+struct Game { money: f64, total: f64, mult: f64, used: u8, lv: [u32; N] }
 impl Game {
-    fn new() -> Game { Game { money: 0.0, total: 0.0, mult: 1.0, used: 0, lv: [0; 9] } }
-    fn cps(&self) -> f64 { (0..9).map(|i| self.lv[i] as f64 * UP[i].2).sum() }
+    fn new() -> Game { Game { money: 0.0, total: 0.0, mult: 1.0, used: 0, lv: [0; N] } }
+    fn cps(&self) -> f64 { (0..N).map(|i| self.lv[i] as f64 * UP[i].2).sum() }
     fn click(&self) -> f64 { (1.0 + 0.05 * self.cps()) * self.mult }
     fn cost(&self, i: usize) -> f64 { UP[i].1 * 1.15f64.powi(self.lv[i] as i32) }
     fn ser(&self) -> String {
@@ -58,7 +80,14 @@ impl Game {
         let mut g = Game::new();
         g.money = p[0].parse().ok()?; g.total = p[1].parse().ok()?;
         g.mult = p[2].parse().ok()?; g.used = p[3].parse().ok()?;
-        for (i, v) in p[4].split(',').enumerate().take(9) { g.lv[i] = v.parse().ok()?; }
+        let mut raw: Vec<u32> = vec![];
+        for v in p[4].split(',').take(N) { raw.push(v.parse().ok()?); }
+        if raw.len() == OLD_MAP.len() {
+            // ancienne sauvegarde : on replace les niveaux (Scam et Trading restent a 0)
+            for (o, &n) in OLD_MAP.iter().enumerate() { g.lv[n] = raw[o]; }
+        } else {
+            for (i, v) in raw.iter().enumerate() { g.lv[i] = *v; }
+        }
         Some(g)
     }
 }
@@ -68,6 +97,10 @@ struct Capi {
     scroll: Scroller, back: Option<Rect>, stonks: Option<Pixmap>, usa: Option<Pixmap>,
     ms_t: f32, usa_t: f32, elon_t: f32, pulse: f32, floats: Vec<(f32, f32, f32, String)>,
     code: String, rand_t: f32, rand_list: Vec<String>, ids: Vec<u32>, store: Store,
+    // codes random / stalin / lenin / cheat
+    pics: Vec<Option<Pixmap>>, pic_i: usize, pic_t: f32, ussr_t: f32, cheat_t: f32,
+    // taxe toutes les 10 secondes
+    tax_clock: f32, tax_t: f32, tax_lost: f64,
 }
 
 impl Capi {
@@ -80,6 +113,8 @@ impl Capi {
             scroll: new_scroller(), back: None, stonks: img("assets/stonks.png"), usa: img("assets/usa.png"),
             ms_t: 0.0, usa_t: 0.0, elon_t: 0.0, pulse: 0.0, floats: vec![],
             code: String::new(), rand_t: 0.0, rand_list: vec![], ids, store,
+            pics: PICS.iter().map(|p| img(p)).collect(), pic_i: 0, pic_t: 0.0, ussr_t: 0.0, cheat_t: 0.0,
+            tax_clock: 0.0, tax_t: 0.0, tax_lost: 0.0,
         }
     }
     fn rnd(&mut self) -> u64 { let mut x = self.rng; x ^= x << 13; x ^= x >> 7; x ^= x << 17; self.rng = x; x }
@@ -95,7 +130,11 @@ impl Capi {
         self.next_ms = 1.0;
         while self.next_ms <= g.total { self.next_ms *= 10.0; }
         self.g = g; self.slot = slot; self.scr = Scr::Game; self.floats.clear();
+        self.clear_pop(); self.tax_clock = 0.0; self.tax_t = 0.0;
         self.scroll = new_scroller(); self.save();
+    }
+    fn clear_pop(&mut self) {
+        self.usa_t = 0.0; self.pic_t = 0.0; self.ussr_t = 0.0; self.cheat_t = 0.0;
     }
     fn earn(&mut self, v: f64) {
         self.g.money += v; self.g.total += v;
@@ -117,7 +156,26 @@ impl Capi {
                 if self.g.used & 1 == 0 { self.g.used |= 1; self.g.mult *= 2.0; ctx.toast("STONKS ! Clic +100%"); }
                 else { ctx.toast("Code déjà utilisé"); return; }
             }
-            "freedom" => { self.usa_t = 5.0; ctx.toast("FREEDOM !"); }
+            "freedom" => { self.clear_pop(); self.usa_t = 5.0; ctx.toast("FREEDOM !"); }
+            // une des images au hasard pendant 5 s
+            "random" => {
+                self.clear_pop();
+                let ok: Vec<usize> = (0..self.pics.len()).filter(|&i| self.pics[i].is_some()).collect();
+                if !ok.is_empty() { let k = (self.rnd() % ok.len() as u64) as usize; self.pic_i = ok[k]; }
+                self.pic_t = 5.0;
+            }
+            // drapeau de l'URSS pendant 5 s + perte de 50% de l'argent
+            "stalin" | "lenin" => {
+                self.clear_pop();
+                self.g.money *= 0.5;
+                self.ussr_t = 5.0;
+            }
+            // texte en grand + perte de 100% de l'argent
+            "cheat" => {
+                self.clear_pop();
+                self.g.money = 0.0;
+                self.cheat_t = 5.0;
+            }
             _ => { ctx.toast("Code invalide"); return; }
         }
         self.scr = Scr::Game;
@@ -125,28 +183,46 @@ impl Capi {
 
     // ---------- mises en page (points x ctx.scale()) ----------
     fn tbtn(&self, s: f32, i: usize) -> Rect { rc((self.w - 200.0 * s) / 2.0, (190.0 + i as f32 * 58.0) * s, 200.0 * s, 46.0 * s) }
+    fn mbtn(&self, s: f32, i: usize) -> Rect { rc((self.w - 200.0 * s) / 2.0, (90.0 + i as f32 * 58.0) * s, 200.0 * s, 46.0 * s) }
     fn menu_btn(&self, s: f32) -> Rect { rc(self.w - 76.0 * s, 4.0 * s, 70.0 * s, 26.0 * s) }
-    fn key_rect(&self, s: f32, i: usize) -> Rect {
-        let kw = (self.w - 12.0 * s) / 9.0;
-        rc(6.0 * s + (i % 9) as f32 * kw, 150.0 * s + (i / 9) as f32 * 38.0 * s, kw - 3.0 * s, 34.0 * s)
+    fn ok_btn(&self, s: f32) -> Rect { rc(36.0 * s, 270.0 * s, self.w - 72.0 * s, 40.0 * s) }
+    fn key_rect(&self, s: f32, r: usize, c: usize) -> Rect {
+        let kw = (self.w - 12.0 * s) / 10.0;
+        let off = (10 - KEYS[r].chars().count()) as f32 * kw / 2.0;
+        rc(6.0 * s + off + c as f32 * kw, 150.0 * s + r as f32 * 38.0 * s, kw - 3.0 * s, 34.0 * s)
     }
     fn shown(&self) -> Vec<u32> { self.ids.iter().rev().take(7).cloned().collect() }
     fn row_y(&self, s: f32, k: usize) -> f32 { 70.0 * s + k as f32 * 48.0 * s }
 
     // ---------- rendu ----------
-    fn overlay(&self, ctx: &Ctx, g: &mut Gfx, pm: &Option<Pixmap>, l1: &str, l2: &str, left: f32, total: f32) {
+    // Fond sombre + image centree (optionnelle) + lignes de texte (texte, taille, couleur) au-dessus
+    fn overlay(&self, ctx: &Ctx, g: &mut Gfx, name: &str, pm: Option<&Pixmap>, lines: &[(&str, f32, u32)], left: f32, total: f32) {
         let s = ctx.scale();
         let a = (left / 0.5).min(1.0).min((total - left) / 0.3 + 0.01).max(0.0);
         fill(g, rc(0.0, 0.0, self.w, self.h), rgba(0x000000, 0.65 * a));
-        let (mut y, mut ph) = (self.h / 2.0, 0.0);
+        let mut y = self.h / 2.0;
         if let Some(p) = pm {
-            let (pw, h) = (p.width() as f32, p.height() as f32);
-            ph = h; y = self.h / 2.0 - h / 2.0;
-            g.image(if total > 4.0 { "usa" } else { "stonks" }, p, (self.w - pw) / 2.0, y, a);
+            let (pw, ph) = (p.width() as f32, p.height() as f32);
+            y = self.h / 2.0 - ph / 2.0;
+            g.image(name, p, (self.w - pw) / 2.0, y, a);
         }
-        let _ = ph;
-        ctx.text_mid(g, l1, self.w / 2.0, y - 56.0 * s, &t(34.0 * s, rgba(0xFFD700, a)));
-        ctx.text_mid(g, l2, self.w / 2.0, y - 22.0 * s, &t(30.0 * s, rgba(0xFFFFFF, a)));
+        let tot: f32 = lines.iter().map(|l| l.1 * 1.15 * s).sum();
+        let mut cy = if pm.is_some() { y - 14.0 * s - tot } else { self.h / 2.0 - tot / 2.0 };
+        for &(txt, sz, col) in lines.iter() {
+            let lh = sz * 1.15 * s;
+            ctx.text_mid(g, txt, self.w / 2.0, cy + lh / 2.0, &t(sz * s, rgba(col, a)));
+            cy += lh;
+        }
+    }
+    // Texte "tax time" (visible en jeu, dans le menu et dans l'ecran des codes)
+    fn tax_banner(&self, ctx: &Ctx, g: &mut Gfx) {
+        if self.tax_t <= 0.0 { return; }
+        let s = ctx.scale();
+        let a = (self.tax_t / 0.4).min(1.0);
+        let y = self.h * 0.78;
+        rfill(g, rc(16.0 * s, y - 36.0 * s, self.w - 32.0 * s, 72.0 * s), 10.0 * s, rgba(0x000000, 0.7 * a));
+        ctx.text_mid(g, "tax time", self.w / 2.0, y - 12.0 * s, &t(28.0 * s, rgba(0xFF4040, a)));
+        ctx.text_mid(g, &format!("-5%  (-${})", fmt(self.tax_lost)), self.w / 2.0, y + 18.0 * s, &t(14.0 * s, rgba(0xFFFFFF, a)));
     }
     fn r_title(&self, ctx: &Ctx, g: &mut Gfx) {
         let s = ctx.scale();
@@ -191,26 +267,37 @@ impl Capi {
             ctx.text_mid(g, &format!("{} chiffre(s)", n.len()), self.w / 2.0, y + 13.0 * s, &Text::new(8.0 * s).color(ctx.theme.subtext).center());
         }
     }
-    fn r_codes(&mut self, ctx: &Ctx, g: &mut Gfx) {
+    // Menu en jeu : bouton "Code", Save, Menu principal
+    fn r_menu(&mut self, ctx: &Ctx, g: &mut Gfx) {
         let s = ctx.scale();
         let hd = ui::header(ctx, g, "Menu", Some("Retour"));
+        self.back = hd.back;
+        for (i, l) in ["Code", "Save", "Menu principal"].iter().enumerate() {
+            let st = if i == 2 { ButtonStyle::Secondary } else { ButtonStyle::Primary };
+            ui::button(ctx, g, self.mbtn(s, i), l, st, false);
+        }
+        self.tax_banner(ctx, g);
+    }
+    // Ecran de saisie du code : clavier AZERTY a l'ecran
+    fn r_code(&mut self, ctx: &Ctx, g: &mut Gfx) {
+        let s = ctx.scale();
+        let hd = ui::header(ctx, g, "Code", Some("Retour"));
         self.back = hd.back;
         rfill(g, rc(16.0 * s, 72.0 * s, self.w - 32.0 * s, 44.0 * s), 8.0 * s, ctx.theme.surface);
         let txt = if self.code.is_empty() { "Entre un code".to_string() } else { self.code.clone() };
         let c = if self.code.is_empty() { ctx.theme.subtext } else { ctx.theme.text };
         ctx.text_mid(g, &txt, self.w / 2.0, 94.0 * s, &t(18.0 * s, c));
-        for (i, ch) in "ABCDEFGHIJKLMNOPQRSTUVWXYZ<".chars().enumerate() {
-            ui::button(ctx, g, self.key_rect(s, i), &ch.to_string(), ButtonStyle::Secondary, false);
+        for (ch, r, k) in key_list() {
+            ui::button(ctx, g, self.key_rect(s, r, k), &ch.to_string(), ButtonStyle::Secondary, false);
         }
-        ui::button(ctx, g, rc(36.0 * s, 270.0 * s, self.w - 72.0 * s, 40.0 * s), "Valider", ButtonStyle::Primary, false);
-        ui::button(ctx, g, rc(36.0 * s, 320.0 * s, self.w - 72.0 * s, 40.0 * s), "Save", ButtonStyle::Primary, false);
-        ui::button(ctx, g, rc(36.0 * s, 370.0 * s, self.w - 72.0 * s, 40.0 * s), "Menu principal", ButtonStyle::Secondary, false);
+        ui::button(ctx, g, self.ok_btn(s), "Valider", ButtonStyle::Primary, false);
+        self.tax_banner(ctx, g);
     }
     fn r_game(&mut self, ctx: &Ctx, g: &mut Gfx) {
         let s = ctx.scale();
         let (top, rh) = (215.0 * s, 46.0 * s);
-        self.scroll.set_content(9.0 * rh + 8.0 * s, self.h - top);
-        for i in 0..9 {
+        self.scroll.set_content(N as f32 * rh + 8.0 * s, self.h - top);
+        for i in 0..N {
             let y = top + i as f32 * rh - self.scroll.pos;
             let d = format!("x{}   ${}   +{}/s", self.g.lv[i], fmt(self.g.cost(i)), fmt(UP[i].2));
             ui::list_row(ctx, g, rc(6.0 * s, y, self.w - 12.0 * s, rh - 4.0 * s), UP[i].0, Some(d.as_str()), false);
@@ -250,8 +337,27 @@ impl Capi {
                 ctx.text_mid(g, l, x, y, &t(30.0 * s, rgb(0xFFFFFF)));
             }
         }
-        if self.ms_t > 0.0 { self.overlay(ctx, g, &self.stonks, "STONKS", "CAPITALIZM !", self.ms_t, 3.0); }
-        if self.usa_t > 0.0 { self.overlay(ctx, g, &self.usa, "FREEDOM", "USA !", self.usa_t, 5.0); }
+        if self.ms_t > 0.0 {
+            self.overlay(ctx, g, "stonks", self.stonks.as_ref(), &[("STONKS", 34.0, 0xFFD700), ("CAPITALIZM !", 30.0, 0xFFFFFF)], self.ms_t, 3.0);
+        }
+        if self.usa_t > 0.0 {
+            self.overlay(ctx, g, "usa", self.usa.as_ref(), &[("FREEDOM", 34.0, 0xFFD700), ("USA !", 30.0, 0xFFFFFF)], self.usa_t, 5.0);
+        }
+        // code "random" : une image au hasard pendant 5 s
+        if self.pic_t > 0.0 {
+            let p = self.pics.get(self.pic_i).and_then(|x| x.as_ref());
+            self.overlay(ctx, g, &format!("p{}", self.pic_i), p, &[], self.pic_t, 5.0);
+        }
+        // codes "stalin" / "lenin" : drapeau de l'URSS pendant 5 s avec "our money" au-dessus
+        if self.ussr_t > 0.0 {
+            let p = self.pics.get(FLAG).and_then(|x| x.as_ref());
+            self.overlay(ctx, g, &format!("p{}", FLAG), p, &[("our money", 34.0, 0xFFD700)], self.ussr_t, 5.0);
+        }
+        // code "cheat" : gros texte
+        if self.cheat_t > 0.0 {
+            self.overlay(ctx, g, "cheat", None, &[("uncle sam", 34.0, 0xFF3030), ("is", 34.0, 0xFF3030), ("desapointed", 34.0, 0xFF3030)], self.cheat_t, 5.0);
+        }
+        self.tax_banner(ctx, g);
     }
 }
 
@@ -265,7 +371,8 @@ impl App for Capi {
             Scr::Title => self.r_title(ctx, g),
             Scr::Saves => self.r_saves(ctx, g),
             Scr::Game => self.r_game(ctx, g),
-            Scr::Codes => self.r_codes(ctx, g),
+            Scr::Menu => self.r_menu(ctx, g),
+            Scr::Code => self.r_code(ctx, g),
             Scr::Random => self.r_random(ctx, g),
         }
     }
@@ -273,15 +380,27 @@ impl App for Capi {
     fn tick(&mut self, ctx: &Ctx, dt: f32) {
         if dt > 0.0 { self.fps = self.fps * 0.92 + (1.0 / dt) * 0.08; }
         match self.scr {
-            Scr::Game | Scr::Codes => {
+            Scr::Game | Scr::Menu | Scr::Code => {
                 let c = self.g.cps();
                 self.earn(c * dt as f64);
                 self.ms_t = (self.ms_t - dt).max(0.0);
                 self.usa_t = (self.usa_t - dt).max(0.0);
                 self.elon_t = (self.elon_t - dt).max(0.0);
+                self.pic_t = (self.pic_t - dt).max(0.0);
+                self.ussr_t = (self.ussr_t - dt).max(0.0);
+                self.cheat_t = (self.cheat_t - dt).max(0.0);
+                self.tax_t = (self.tax_t - dt).max(0.0);
                 self.pulse = (self.pulse - dt * 6.0).max(0.0);
                 for f in self.floats.iter_mut() { f.2 += dt; }
                 self.floats.retain(|f| f.2 < 1.0);
+                // "tax time" : toutes les 10 secondes, -5% de la fortune
+                self.tax_clock += dt;
+                if self.tax_clock >= 10.0 {
+                    self.tax_clock -= 10.0;
+                    self.tax_lost = self.g.money * 0.05;
+                    self.g.money -= self.tax_lost;
+                    self.tax_t = 2.5;
+                }
                 self.save_t += dt;
                 if self.save_t > 5.0 { self.save_t = 0.0; self.save(); }
                 self.scroll.update(dt);
@@ -311,7 +430,7 @@ impl App for Capi {
                 Event::Tap { x, y } => {
                     let (top, rh) = (215.0 * s, 46.0 * s);
                     let (cx, cy) = (self.w / 2.0, 138.0 * s);
-                    if hit(&self.menu_btn(s), x, y) { self.save(); self.code.clear(); self.scr = Scr::Codes; }
+                    if hit(&self.menu_btn(s), x, y) { self.save(); self.code.clear(); self.scr = Scr::Menu; }
                     else if (x - cx).powi(2) + (y - cy).powi(2) < (62.0 * s).powi(2) {
                         let v = self.g.click();
                         self.earn(v);
@@ -319,7 +438,7 @@ impl App for Capi {
                         self.floats.push((x, y, 0.0, format!("+{}", fmt(v))));
                     } else if y > top {
                         let i = ((y - top + self.scroll.pos) / rh) as usize;
-                        if i < 9 {
+                        if i < N {
                             let c = self.g.cost(i);
                             if self.g.money >= c { self.g.money -= c; self.g.lv[i] += 1; }
                             else { ctx.toast("Pas assez d'argent !"); }
@@ -358,19 +477,22 @@ impl App for Capi {
             (Scr::Random, Event::Tap { x, y }) => {
                 if self.back.map_or(false, |b| hit(&b, x, y)) { self.scr = Scr::Title; }
             }
-            (Scr::Codes, Event::Tap { x, y }) => {
+            (Scr::Menu, Event::Tap { x, y }) => {
                 if self.back.map_or(false, |b| hit(&b, x, y)) { self.scr = Scr::Game; return; }
-                for (i, ch) in "ABCDEFGHIJKLMNOPQRSTUVWXYZ<".chars().enumerate() {
-                    if hit(&self.key_rect(s, i), x, y) {
+                if hit(&self.mbtn(s, 0), x, y) { self.code.clear(); self.scr = Scr::Code; }
+                else if hit(&self.mbtn(s, 1), x, y) { self.save(); ctx.toast("Partie sauvegardée !"); }
+                else if hit(&self.mbtn(s, 2), x, y) { self.save(); self.scr = Scr::Title; }
+            }
+            // Saisie du code : uniquement en appuyant sur les touches AZERTY a l'ecran
+            (Scr::Code, Event::Tap { x, y }) => {
+                if self.back.map_or(false, |b| hit(&b, x, y)) { self.scr = Scr::Menu; return; }
+                for (ch, r, k) in key_list() {
+                    if hit(&self.key_rect(s, r, k), x, y) {
                         if ch == '<' { self.code.pop(); } else if self.code.len() < 12 { self.code.push(ch); }
                     }
                 }
-                if hit(&rc(36.0 * s, 270.0 * s, self.w - 72.0 * s, 40.0 * s), x, y) { self.apply_code(ctx); }
-                if hit(&rc(36.0 * s, 320.0 * s, self.w - 72.0 * s, 40.0 * s), x, y) { self.save(); ctx.toast("Partie sauvegardée !"); }
-                if hit(&rc(36.0 * s, 370.0 * s, self.w - 72.0 * s, 40.0 * s), x, y) { self.save(); self.scr = Scr::Title; }
+                if hit(&self.ok_btn(s), x, y) { self.apply_code(ctx); }
             }
-            (Scr::Codes, Event::Key(Key::Char(c))) => { if c.is_alphabetic() && self.code.len() < 12 { self.code.push(c.to_ascii_uppercase()); } }
-            (Scr::Codes, Event::Key(Key::Enter)) => self.apply_code(ctx),
             _ => {}
         }
     }
@@ -379,7 +501,8 @@ impl App for Capi {
         match self.scr {
             Scr::Title => false,
             Scr::Game => { self.save(); self.scr = Scr::Title; true }
-            Scr::Codes => { self.scr = Scr::Game; true }
+            Scr::Menu => { self.scr = Scr::Game; true }
+            Scr::Code => { self.scr = Scr::Menu; true }
             _ => { self.scr = Scr::Title; true }
         }
     }
