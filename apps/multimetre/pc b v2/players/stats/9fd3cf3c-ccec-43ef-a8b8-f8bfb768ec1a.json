@@ -1,0 +1,59 @@
+{
+  "stats": {
+    "minecraft:dropped": {
+      "minecraft:white_wool": 1,
+      "minecraft:black_wool": 1
+    },
+    "minecraft:used": {
+      "minecraft:repeater": 158,
+      "minecraft:light_gray_wool_slab": 26,
+      "minecraft:pink_wool": 76,
+      "minecraft:sticky_piston": 30,
+      "minecraft:oak_sign": 26,
+      "minecraft:light_gray_wool": 115,
+      "minecraft:red_wool": 245,
+      "minecraft:lime_carpet": 50,
+      "minecraft:lime_wool_slab": 114,
+      "minecraft:lever": 20,
+      "minecraft:redstone_block": 29,
+      "minecraft:white_concrete": 537,
+      "minecraft:light_blue_wool": 173,
+      "minecraft:magenta_wool": 171,
+      "minecraft:redstone": 1150,
+      "minecraft:black_wool": 409,
+      "minecraft:black_wool_slab": 18,
+      "minecraft:glow_ink_sac": 1,
+      "minecraft:white_wool": 126,
+      "minecraft:gray_wool": 120,
+      "minecraft:comparator": 2,
+      "minecraft:redstone_lamp": 195,
+      "minecraft:orange_wool": 65,
+      "minecraft:brown_wool": 108,
+      "minecraft:purple_wool": 196,
+      "minecraft:green_wool": 1352,
+      "minecraft:yellow_wool": 251
+    },
+    "minecraft:picked_up": {
+      "minecraft:white_wool": 1,
+      "minecraft:black_wool": 1,
+      "minecraft:redstone": 6
+    },
+    "minecraft:custom": {
+      "minecraft:time_since_rest": 353176,
+      "minecraft:walk_one_cm": 188391,
+      "minecraft:leave_game": 6,
+      "minecraft:mob_kills": 4,
+      "minecraft:damage_dealt": 170,
+      "minecraft:play_time": 353176,
+      "minecraft:jump": 291,
+      "minecraft:time_since_death": 353176,
+      "minecraft:drop": 2,
+      "minecraft:sprint_one_cm": 9259,
+      "minecraft:total_world_time": 366981,
+      "minecraft:fly_one_cm": 1352515,
+      "minecraft:crouch_one_cm": 119,
+      "minecraft:sneak_time": 4516
+    }
+  },
+  "DataVersion": 5023
+}
