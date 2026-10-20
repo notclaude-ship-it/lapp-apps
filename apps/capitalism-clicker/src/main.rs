@@ -10,7 +10,7 @@ fn fill(g: &mut Gfx, r: Rect, c: Color) { g.rect(r.x, r.y, r.w, r.h, c) }
 fn rfill(g: &mut Gfx, r: Rect, rad: f32, c: Color) { g.rrect(r.x, r.y, r.w, r.h, rad, c) }
 fn disc(g: &mut Gfx, x: f32, y: f32, rad: f32, c: Color) { g.circle(x, y, rad, c) }
 fn gsize(g: &Gfx) -> (f32, f32) { let (w, h) = g.size(); (w as f32, h as f32) }
-fn img(p: &str) -> Option<Pixmap> { load_png(p).into_iter().next() }
+fn img(p: &str) -> Option<Pixmap> { lapp_sdk::load_png(p) }
 fn new_scroller() -> Scroller { Scroller::new() }
 fn sget(st: &Store, k: &str) -> Option<String> { st.get(k).map(|s| s.to_string()) }
 fn sset(st: &mut Store, k: &str, v: &str) { let _ = st.set(k, v); }
