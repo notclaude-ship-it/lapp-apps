@@ -1,0 +1,77 @@
+Manifest-Version: 1.0
+
+Name: AndroidManifest.xml
+SHA-256-Digest: MkD4zdsYbLU6t+Wg7BcyhNeemTvSUqaIQDEKyIW4B+M=
+
+Name: classes.dex
+SHA-256-Digest: gc9tAAu/7AdU+Kmf+0jowIxnPZJoHvQhPGqjWuvNgT0=
+
+Name: res/drawable/bg_add_tile.xml
+SHA-256-Digest: X07fnOH32gIBRkNYZGmHK79PDaQPVSHC+pd6wE5ZwU4=
+
+Name: res/drawable/bg_button.xml
+SHA-256-Digest: ahlXH0/M0POi0xPz5WN19XkbiPyGjRWagGIzoFZ6NRE=
+
+Name: res/drawable/bg_button_outline.xml
+SHA-256-Digest: 0ly5Hqr8b2p5udgVNotOJaQSPwkBwXLET8eZiPC8BgM=
+
+Name: res/drawable/bg_card.xml
+SHA-256-Digest: 5Jnz8BAYdTIpd46/V9BMSO663RCoGlfx+FHgeP3y0mM=
+
+Name: res/drawable/bg_fab.xml
+SHA-256-Digest: qJZxc5rN8KfOKquAHkSn7IAiKbua6kDIbXVd6yrKqTs=
+
+Name: res/drawable/bg_thumb.xml
+SHA-256-Digest: WVMQ7bThnBz8IDlMGDqi1cykIG+vBqFasHZne5afbeY=
+
+Name: res/drawable/ic_add.xml
+SHA-256-Digest: yheQLiXuFoQCVTncgafpyVUagBNdMkfVSRRQk7uO9i8=
+
+Name: res/drawable/ic_back.xml
+SHA-256-Digest: qZ1ekvOUhVHV87qYuMxbiipNUERpu4OCZW0m1XOU6Sw=
+
+Name: res/drawable/ic_camera.xml
+SHA-256-Digest: aWO+32GBhOEamRilxjkga+jEtbodqxLrbB0YEDvppDA=
+
+Name: res/drawable/ic_check.xml
+SHA-256-Digest: 27WuVFDxt4JIgiFo1jnUdGhNMz42UAkCR9VM+n/FMRU=
+
+Name: res/drawable/ic_close.xml
+SHA-256-Digest: TV3FA/hMb4opSYyyGs0sepl1SHr+dF8DUheXmz055Fo=
+
+Name: res/drawable/ic_delete.xml
+SHA-256-Digest: Occ5npswNRAiewnP0KdZgxNn2P/PpJq3Iuv+gLJJfiM=
+
+Name: res/drawable/ic_image.xml
+SHA-256-Digest: GF9yw3mU0srvFeafcg9nXfAu7JJA4xwKRrX3OXj3oYY=
+
+Name: res/drawable/ic_more.xml
+SHA-256-Digest: PrrBw/iYeH1SNTmmYW8Gt3CP0A74bhwjgdp6xINOrG0=
+
+Name: res/layout/activity_add_edit.xml
+SHA-256-Digest: iTj6ZjF65MK4+dPjZqq4VM3HVRjEP2ub8kIW4eStjvE=
+
+Name: res/layout/activity_main.xml
+SHA-256-Digest: vlSrQ0XavxMswakPjveJdtTTlOs42TOKKX5Z5IIw+48=
+
+Name: res/layout/activity_session.xml
+SHA-256-Digest: n1l98t0WeoVmIeszQRjXVDqC5vrDLs5hMImwtYcmYqk=
+
+Name: res/layout/grid_item.xml
+SHA-256-Digest: /x6EgsMDfg5CG6n40xrG0JaFqUGFCfZ1dcemZgEpesA=
+
+Name: res/layout/row_checklist_check.xml
+SHA-256-Digest: bcPvyZ6nhVnxfW/+z7jj+JTb7M/p0yqfVMsAu1uuYFs=
+
+Name: res/layout/row_checklist_edit.xml
+SHA-256-Digest: NPsnyZrdmZzbQAOH8dpAu5km9u8hLIW0jpxKD7nTjMU=
+
+Name: res/mipmap-xxxhdpi-v4/ic_launcher.png
+SHA-256-Digest: /s7HxjRV+mxWqtYxK6fXRHV183orI3xdwszJSs16JZc=
+
+Name: res/mipmap-xxxhdpi-v4/ic_launcher_fg.png
+SHA-256-Digest: 3senkiqLwFj5Uo0uKMSGRmMpVIQ6dt9KKOQlYVI0nkA=
+
+Name: resources.arsc
+SHA-256-Digest: PNxgIpAbwcFhUTgq1Ot3NtsMchkprvhjdTNRz8mwji4=
+

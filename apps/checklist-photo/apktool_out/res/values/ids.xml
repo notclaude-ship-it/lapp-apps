@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <item type="id" name="btn_add_row" />
+    <item type="id" name="btn_back" />
+    <item type="id" name="btn_checklist_done" />
+    <item type="id" name="btn_delete" />
+    <item type="id" name="btn_photos_done" />
+    <item type="id" name="btn_pick_icon" />
+    <item type="id" name="btn_row_delete" />
+    <item type="id" name="btn_save" />
+    <item type="id" name="btn_take_photo" />
+    <item type="id" name="card_root" />
+    <item type="id" name="check_row" />
+    <item type="id" name="container_checklist" />
+    <item type="id" name="container_checklist_check" />
+    <item type="id" name="container_photos" />
+    <item type="id" name="edit_name" />
+    <item type="id" name="edit_row_text" />
+    <item type="id" name="grid_items" />
+    <item type="id" name="img_icon" />
+    <item type="id" name="img_icon_preview" />
+    <item type="id" name="panel_checklist" />
+    <item type="id" name="panel_photos" />
+    <item type="id" name="txt_badge" />
+    <item type="id" name="txt_name" />
+    <item type="id" name="txt_photo_counter" />
+    <item type="id" name="txt_row_label" />
+    <item type="id" name="txt_step" />
+    <item type="id" name="txt_title" />
+</resources>

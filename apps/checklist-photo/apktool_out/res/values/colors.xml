@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="md_background">#fffffbff</color>
+    <color name="md_error">#ffba1a1a</color>
+    <color name="md_error_container">#ffffdad6</color>
+    <color name="md_on_background">#ff1c1b1e</color>
+    <color name="md_on_error">#ffffffff</color>
+    <color name="md_on_primary">#ffffffff</color>
+    <color name="md_on_primary_container">#ff22005d</color>
+    <color name="md_on_secondary">#ffffffff</color>
+    <color name="md_on_secondary_container">#ff1e192b</color>
+    <color name="md_on_surface">#ff1c1b1e</color>
+    <color name="md_on_surface_variant">#ff49454e</color>
+    <color name="md_on_tertiary">#ffffffff</color>
+    <color name="md_on_tertiary_container">#ff31101d</color>
+    <color name="md_outline">#ff7a757f</color>
+    <color name="md_primary">#ff6750a4</color>
+    <color name="md_primary_container">#ffe9ddff</color>
+    <color name="md_secondary">#ff625b71</color>
+    <color name="md_secondary_container">#ffe8def8</color>
+    <color name="md_surface">#fffffbff</color>
+    <color name="md_surface_container">#fff3edf7</color>
+    <color name="md_surface_container_high">#ffece6f0</color>
+    <color name="md_surface_variant">#ffe7e0eb</color>
+    <color name="md_tertiary">#ff7e5260</color>
+    <color name="md_tertiary_container">#ffffd9e3</color>
+</resources>

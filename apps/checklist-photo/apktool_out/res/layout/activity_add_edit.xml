@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout android:orientation="vertical" android:background="@color/md_background" android:layout_width="fill_parent" android:layout_height="fill_parent"
+  xmlns:android="http://schemas.android.com/apk/res/android">
+    <LinearLayout android:gravity="center_vertical" android:orientation="horizontal" android:background="@color/md_primary" android:paddingTop="24.0dip" android:paddingBottom="16.0dip" android:layout_width="fill_parent" android:layout_height="wrap_content" android:paddingStart="8.0dip" android:paddingEnd="20.0dip">
+        <ImageButton android:id="@id/btn_back" android:background="?android:selectableItemBackgroundBorderless" android:layout_width="44.0dip" android:layout_height="44.0dip" android:src="@drawable/ic_back" android:tint="@color/md_on_primary" android:contentDescription="@null" />
+        <TextView android:textSize="20.0sp" android:textStyle="bold" android:textColor="@color/md_on_primary" android:id="@id/txt_title" android:layout_width="0.0dip" android:layout_height="wrap_content" android:text="Nouvel élément" android:layout_weight="1.0" android:layout_marginStart="8.0dip" />
+    </LinearLayout>
+    <ScrollView android:layout_width="fill_parent" android:layout_height="0.0dip" android:layout_weight="1.0">
+        <LinearLayout android:orientation="vertical" android:padding="20.0dip" android:layout_width="fill_parent" android:layout_height="wrap_content">
+            <FrameLayout android:layout_gravity="center_horizontal" android:layout_width="140.0dip" android:layout_height="140.0dip">
+                <ImageView android:id="@id/img_icon_preview" android:background="@drawable/bg_thumb" android:layout_width="fill_parent" android:layout_height="fill_parent" android:scaleType="centerCrop" android:contentDescription="@null" />
+                <ImageView android:layout_gravity="end|bottom|center" android:id="@id/btn_pick_icon" android:background="@drawable/bg_fab" android:padding="7.0dip" android:layout_width="34.0dip" android:layout_height="34.0dip" android:layout_margin="4.0dip" android:src="@drawable/ic_camera" android:tint="@color/md_on_primary" android:contentDescription="@null" />
+            </FrameLayout>
+            <EditText android:textColor="@color/md_on_surface" android:textColorHint="@color/md_on_surface_variant" android:id="@id/edit_name" android:background="@drawable/bg_button_outline" android:padding="14.0dip" android:layout_width="fill_parent" android:layout_height="wrap_content" android:layout_marginTop="24.0dip" android:hint="Nom (ex : Airbnb Appartement)" android:inputType="textCapSentences" />
+            <TextView android:textSize="17.0sp" android:textStyle="bold" android:textColor="@color/md_on_surface" android:layout_width="fill_parent" android:layout_height="wrap_content" android:layout_marginTop="26.0dip" android:text="Check-list" />
+            <TextView android:textSize="13.0sp" android:textColor="@color/md_on_surface_variant" android:layout_width="fill_parent" android:layout_height="wrap_content" android:layout_marginBottom="10.0dip" android:text="Étapes à cocher à chaque session" />
+            <LinearLayout android:orientation="vertical" android:id="@id/container_checklist" android:layout_width="fill_parent" android:layout_height="wrap_content" />
+            <TextView android:textStyle="bold" android:textColor="@color/md_primary" android:gravity="center" android:id="@id/btn_add_row" android:background="@drawable/bg_add_tile" android:padding="14.0dip" android:layout_width="fill_parent" android:layout_height="wrap_content" android:layout_marginTop="6.0dip" android:text="Ajouter une étape" android:drawablePadding="8.0dip" android:drawableStart="@drawable/ic_add" android:drawableTint="@color/md_primary" />
+            <TextView android:textSize="16.0sp" android:textStyle="bold" android:textColor="@color/md_on_primary" android:gravity="center" android:id="@id/btn_save" android:background="@drawable/bg_button" android:padding="16.0dip" android:layout_width="fill_parent" android:layout_height="wrap_content" android:layout_marginTop="30.0dip" android:text="Enregistrer" />
+            <TextView android:textSize="15.0sp" android:textColor="@color/md_error" android:gravity="center" android:id="@id/btn_delete" android:background="@drawable/bg_button_outline" android:padding="16.0dip" android:visibility="gone" android:layout_width="fill_parent" android:layout_height="wrap_content" android:layout_marginTop="14.0dip" android:layout_marginBottom="10.0dip" android:text="Supprimer cet élément" />
+        </LinearLayout>
+    </ScrollView>
+</LinearLayout>

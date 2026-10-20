@@ -1,0 +1,36 @@
+.class public final synthetic Lcom/dragonis/checklist/SessionActivity$$ExternalSyntheticLambda1;
+.super Ljava/lang/Object;
+.source "D8$$SyntheticClass"
+
+# interfaces
+.implements Landroid/view/View$OnClickListener;
+
+
+# instance fields
+.field public final synthetic f$0:Lcom/dragonis/checklist/SessionActivity;
+
+
+# direct methods
+.method public synthetic constructor <init>(Lcom/dragonis/checklist/SessionActivity;)V
+    .locals 0
+
+    .line 0
+    invoke-direct {p0}, Ljava/lang/Object;-><init>()V
+
+    iput-object p1, p0, Lcom/dragonis/checklist/SessionActivity$$ExternalSyntheticLambda1;->f$0:Lcom/dragonis/checklist/SessionActivity;
+
+    return-void
+.end method
+
+
+# virtual methods
+.method public final onClick(Landroid/view/View;)V
+    .locals 1
+
+    .line 0
+    iget-object v0, p0, Lcom/dragonis/checklist/SessionActivity$$ExternalSyntheticLambda1;->f$0:Lcom/dragonis/checklist/SessionActivity;
+
+    invoke-static {v0, p1}, Lcom/dragonis/checklist/SessionActivity;->$r8$lambda$fR__geWDmb2rAGosHv007B1u_a4(Lcom/dragonis/checklist/SessionActivity;Landroid/view/View;)V
+
+    return-void
+.end method
