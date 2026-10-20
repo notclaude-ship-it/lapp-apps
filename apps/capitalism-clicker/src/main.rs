@@ -98,7 +98,7 @@ struct Capi {
     ms_t: f32, usa_t: f32, elon_t: f32, pulse: f32, floats: Vec<(f32, f32, f32, String)>,
     code: String, rand_t: f32, rand_list: Vec<String>, ids: Vec<u32>, store: Store,
     // codes random / stalin / lenin / cheat
-    pics: Vec<Option<Pixmap>>, pic_i: usize, pic_t: f32, ussr_t: f32, cheat_t: f32,
+    pics: Vec<Option<Pixmap>>, pic_i: usize, pic_t: f32, ussr_t: f32, cheat_t: f32, anticheat_t: f32,
     // taxe toutes les 10 secondes
     tax_clock: f32, tax_t: f32, tax_lost: f64,
 }
@@ -113,7 +113,7 @@ impl Capi {
             scroll: new_scroller(), back: None, stonks: img("assets/stonks.png"), usa: img("assets/usa.png"),
             ms_t: 0.0, usa_t: 0.0, elon_t: 0.0, pulse: 0.0, floats: vec![],
             code: String::new(), rand_t: 0.0, rand_list: vec![], ids, store,
-            pics: PICS.iter().map(|p| img(p)).collect(), pic_i: 0, pic_t: 0.0, ussr_t: 0.0, cheat_t: 0.0,
+            pics: PICS.iter().map(|p| img(p)).collect(), pic_i: 0, pic_t: 0.0, ussr_t: 0.0, cheat_t: 0.0, anticheat_t: 0.0,
             tax_clock: 0.0, tax_t: 0.0, tax_lost: 0.0,
         }
     }
@@ -134,7 +134,7 @@ impl Capi {
         self.scroll = new_scroller(); self.save();
     }
     fn clear_pop(&mut self) {
-        self.usa_t = 0.0; self.pic_t = 0.0; self.ussr_t = 0.0; self.cheat_t = 0.0;
+        self.usa_t = 0.0; self.pic_t = 0.0; self.ussr_t = 0.0; self.cheat_t = 0.0; self.anticheat_t = 0.0;
     }
     fn earn(&mut self, v: f64) {
         self.g.money += v; self.g.total += v;
@@ -363,7 +363,7 @@ impl Capi {
             self.overlay(ctx, g, "cheat", None, &[("uncle sam", 34.0, 0xFF3030), ("is", 34.0, 0xFF3030), ("desapointed", 34.0, 0xFF3030)], self.cheat_t, 5.0);
         }
         if self.anticheat_t > 0.0 {
-            self.overlay(ctx, g, "cheat", None, &[("uncle sam", 34.0, 0xFF3030), ("is", 34.0, 0xFF3030), ("proud", 34.0, 0xFF3030)], self.cheat_t, 5.0);
+            self.overlay(ctx, g, "cheat", None, &[("uncle sam", 34.0, 0xFF3030), ("is", 34.0, 0xFF3030), ("proud", 34.0, 0xFF3030)], self.anticheat_t, 5.0);
         }
         self.tax_banner(ctx, g);
     }
@@ -397,6 +397,7 @@ impl App for Capi {
                 self.pic_t = (self.pic_t - dt).max(0.0);
                 self.ussr_t = (self.ussr_t - dt).max(0.0);
                 self.cheat_t = (self.cheat_t - dt).max(0.0);
+                self.anticheat_t = (self.anticheat_t - dt).max(0.0);
                 self.tax_t = (self.tax_t - dt).max(0.0);
                 self.pulse = (self.pulse - dt * 6.0).max(0.0);
                 for f in self.floats.iter_mut() { f.2 += dt; }
