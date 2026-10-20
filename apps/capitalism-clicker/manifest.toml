@@ -1,0 +1,8 @@
+manifest_version = 1
+id          = "com.ziyad.capitalismclicker"
+name        = "Capitalism Supremacy Clicker"
+version     = "1.0.0"
+arch        = "aarch64"
+exec        = "bin/capitalismclicker"
+icon        = "icon.png"
+permissions = ["display", "storage", "gpu"]
