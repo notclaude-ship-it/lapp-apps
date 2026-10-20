@@ -1,0 +1,8 @@
+manifest_version = 1
+id          = "com.temu.minecraft"
+name        = "Minecraft de Temu"
+version     = "1.0.0"
+arch        = "aarch64"
+exec        = "bin/minecraft-de-temu"
+icon        = "icon.png"
+permissions = ["display", "storage", "gpu", "audio"]
