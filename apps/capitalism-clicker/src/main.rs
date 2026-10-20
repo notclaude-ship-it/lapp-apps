@@ -10,7 +10,7 @@ fn fill(g: &mut Gfx, r: Rect, c: Color) { g.rect(r.x, r.y, r.w, r.h, c) }
 fn rfill(g: &mut Gfx, r: Rect, rad: f32, c: Color) { g.rrect(r.x, r.y, r.w, r.h, rad, c) }
 fn disc(g: &mut Gfx, x: f32, y: f32, rad: f32, c: Color) { g.circle(x, y, rad, c) }
 fn gsize(g: &Gfx) -> (f32, f32) { let (w, h) = g.size(); (w as f32, h as f32) }
-fn img(p: &str) -> Option<Pixmap> { lapp_sdk::load_png(p) }
+fn img(p: &str) -> Option<Pixmap> { load_png(p).into_iter().next() }
 fn new_scroller() -> Scroller { Scroller::new() }
 fn sget(st: &Store, k: &str) -> Option<String> { st.get(k).map(|s| s.to_string()) }
 fn sset(st: &mut Store, k: &str, v: &str) { let _ = st.set(k, v); }
@@ -61,7 +61,7 @@ fn fmt(v: f64) -> String {
 fn t(s: f32, c: Color) -> Text { Text::new(s).bold().color(c).center() }
 
 #[derive(PartialEq, Clone, Copy)]
-enum Scr { Title, Saves, Game, Menu, Code, Random }
+enum Scr { Title, Saves, Game, Menu, Code, Random, Maze }
 
 #[derive(Clone)]
 struct Game { money: f64, total: f64, mult: f64, used: u8, lv: [u32; N] }
@@ -92,15 +92,116 @@ impl Game {
     }
 }
 
+
+// ===================== Mini-jeu "game" : labyrinthe + nextbots =====================
+const MN: usize = 21;          // taille de la grille (impaire)
+const TS: f32 = 56.0;          // taille d'une case en pixels
+const PR: f32 = 0.28;          // rayon du joueur (en cases)
+const BOT_N: usize = 5;
+const BOT_PICS: [&str; BOT_N] = [
+    "assets/bot0.png", "assets/bot1.png", "assets/bot2.png", "assets/bot3.png", "assets/bot4.png",
+];
+
+#[derive(PartialEq, Clone, Copy)]
+enum Mz { Play, Wasted, Won }
+
+struct Bot { x: f32, y: f32, tx: f32, ty: f32, delay: f32, spd: f32 }
+
+struct Maze {
+    wall: Vec<bool>, dist: Vec<i32>,
+    px: f32, py: f32, hx: f32, hy: f32,
+    chest: (usize, usize), bots: Vec<Bot>,
+    state: Mz, t: f32, st: f32, mark: (f32, f32, f32), bonus: f64,
+}
+
+fn bfs(wall: &[bool], sx: usize, sy: usize) -> Vec<i32> {
+    let mut d = vec![-1i32; MN * MN];
+    if sx >= MN || sy >= MN || wall[sy * MN + sx] { return d; }
+    let mut q = std::collections::VecDeque::new();
+    d[sy * MN + sx] = 0; q.push_back((sx, sy));
+    while let Some((x, y)) = q.pop_front() {
+        let cur = d[y * MN + x];
+        for (dx, dy) in [(1i32, 0i32), (-1, 0), (0, 1), (0, -1)] {
+            let (nx, ny) = (x as i32 + dx, y as i32 + dy);
+            if nx < 0 || ny < 0 || nx >= MN as i32 || ny >= MN as i32 { continue; }
+            let i = ny as usize * MN + nx as usize;
+            if !wall[i] && d[i] < 0 { d[i] = cur + 1; q.push_back((nx as usize, ny as usize)); }
+        }
+    }
+    d
+}
+
+impl Maze {
+    fn empty() -> Maze {
+        Maze { wall: vec![true; MN * MN], dist: vec![-1; MN * MN], px: 1.5, py: 1.5, hx: 0.0, hy: 0.0,
+               chest: (1, 1), bots: vec![], state: Mz::Play, t: 0.0, st: 0.0, mark: (0.0, 0.0, 0.0), bonus: 0.0 }
+    }
+    fn solid(&self, x: f32, y: f32) -> bool {
+        if x < 0.0 || y < 0.0 { return true; }
+        let (tx, ty) = (x as usize, y as usize);
+        tx >= MN || ty >= MN || self.wall[ty * MN + tx]
+    }
+    fn free(&self, x: f32, y: f32) -> bool {
+        !(self.solid(x - PR, y - PR) || self.solid(x + PR, y - PR) || self.solid(x - PR, y + PR) || self.solid(x + PR, y + PR))
+    }
+    fn set_state(&mut self, s: Mz) { self.state = s; self.st = 0.0; self.hx = 0.0; self.hy = 0.0; }
+    fn update(&mut self, dt: f32) {
+        self.st += dt;
+        self.mark.2 = (self.mark.2 - dt).max(0.0);
+        if self.state != Mz::Play { return; }
+        self.t += dt;
+        // deplacement du joueur (glisse le long des murs)
+        let sp = 3.2 * dt;
+        let nx = self.px + self.hx * sp;
+        if self.free(nx, self.py) { self.px = nx; }
+        let ny = self.py + self.hy * sp;
+        if self.free(self.px, ny) { self.py = ny; }
+        // coffre
+        let (cx, cy) = (self.chest.0 as f32 + 0.5, self.chest.1 as f32 + 0.5);
+        if (self.px - cx).hypot(self.py - cy) < 0.6 { self.set_state(Mz::Won); return; }
+        // nextbots : suivent le chemin le plus court dans le labyrinthe
+        self.dist = bfs(&self.wall, self.px as usize, self.py as usize);
+        let (px, py, t) = (self.px, self.py, self.t);
+        let (ptx, pty) = (px as usize, py as usize);
+        let mut dead = false;
+        for b in self.bots.iter_mut() {
+            if b.delay > 0.0 { b.delay -= dt; continue; }
+            if (b.x - b.tx).hypot(b.y - b.ty) < 0.04 {
+                let (cx, cy) = (b.tx as usize, b.ty as usize);
+                if (cx, cy) == (ptx, pty) { b.tx = px; b.ty = py; }
+                else {
+                    let mut best = (cx, cy);
+                    let mut bd = self.dist[cy * MN + cx];
+                    for (dx, dy) in [(1i32, 0i32), (-1, 0), (0, 1), (0, -1)] {
+                        let (nx, ny) = (cx as i32 + dx, cy as i32 + dy);
+                        if nx < 0 || ny < 0 || nx >= MN as i32 || ny >= MN as i32 { continue; }
+                        let dd = self.dist[ny as usize * MN + nx as usize];
+                        if dd >= 0 && (bd < 0 || dd < bd) { bd = dd; best = (nx as usize, ny as usize); }
+                    }
+                    b.tx = best.0 as f32 + 0.5; b.ty = best.1 as f32 + 0.5;
+                }
+            }
+            let (dx, dy) = (b.tx - b.x, b.ty - b.y);
+            let d = dx.hypot(dy);
+            let step = (b.spd + 0.015 * t.min(120.0)) * dt;
+            if d <= step { b.x = b.tx; b.y = b.ty; } else { b.x += dx / d * step; b.y += dy / d * step; }
+            if (b.x - px).hypot(b.y - py) < 0.6 { dead = true; }
+        }
+        if dead { self.set_state(Mz::Wasted); }
+    }
+}
+
 struct Capi {
     scr: Scr, g: Game, slot: u32, next_ms: f64, w: f32, h: f32, fps: f32, rng: u64, save_t: f32,
     scroll: Scroller, back: Option<Rect>, stonks: Option<Pixmap>, usa: Option<Pixmap>,
     ms_t: f32, usa_t: f32, elon_t: f32, pulse: f32, floats: Vec<(f32, f32, f32, String)>,
     code: String, rand_t: f32, rand_list: Vec<String>, ids: Vec<u32>, store: Store,
     // codes random / stalin / lenin / cheat
-    pics: Vec<Option<Pixmap>>, pic_i: usize, pic_t: f32, ussr_t: f32, cheat_t: f32, anticheat_t: f32,
+    pics: Vec<Option<Pixmap>>, pic_i: usize, pic_t: f32, ussr_t: f32, cheat_t: f32,
     // taxe toutes les 10 secondes
     tax_clock: f32, tax_t: f32, tax_lost: f64,
+    // mini-jeu labyrinthe
+    mz: Maze, bot_pics: Vec<Option<Pixmap>>,
 }
 
 impl Capi {
@@ -113,8 +214,9 @@ impl Capi {
             scroll: new_scroller(), back: None, stonks: img("assets/stonks.png"), usa: img("assets/usa.png"),
             ms_t: 0.0, usa_t: 0.0, elon_t: 0.0, pulse: 0.0, floats: vec![],
             code: String::new(), rand_t: 0.0, rand_list: vec![], ids, store,
-            pics: PICS.iter().map(|p| img(p)).collect(), pic_i: 0, pic_t: 0.0, ussr_t: 0.0, cheat_t: 0.0, anticheat_t: 0.0,
+            pics: PICS.iter().map(|p| img(p)).collect(), pic_i: 0, pic_t: 0.0, ussr_t: 0.0, cheat_t: 0.0,
             tax_clock: 0.0, tax_t: 0.0, tax_lost: 0.0,
+            mz: Maze::empty(), bot_pics: BOT_PICS.iter().map(|p| img(p)).collect(),
         }
     }
     fn rnd(&mut self) -> u64 { let mut x = self.rng; x ^= x << 13; x ^= x >> 7; x ^= x << 17; self.rng = x; x }
@@ -134,13 +236,170 @@ impl Capi {
         self.scroll = new_scroller(); self.save();
     }
     fn clear_pop(&mut self) {
-        self.usa_t = 0.0; self.pic_t = 0.0; self.ussr_t = 0.0; self.cheat_t = 0.0; self.anticheat_t = 0.0;
+        self.usa_t = 0.0; self.pic_t = 0.0; self.ussr_t = 0.0; self.cheat_t = 0.0;
     }
     fn earn(&mut self, v: f64) {
         self.g.money += v; self.g.total += v;
         if self.g.total >= self.next_ms {
             self.ms_t = 3.0;
             while self.next_ms <= self.g.total { self.next_ms *= 10.0; }
+        }
+    }
+    fn new_maze(&mut self) -> Maze {
+        let n = MN;
+        let mut m = Maze::empty();
+        m.wall[n + 1] = false;
+        let mut stack = vec![(1usize, 1usize)];
+        while let Some(&(x, y)) = stack.last() {
+            let mut nb: Vec<(usize, usize, usize, usize)> = vec![];
+            if x >= 3 && m.wall[y * n + x - 2] { nb.push((x - 2, y, x - 1, y)); }
+            if x + 2 < n - 1 && m.wall[y * n + x + 2] { nb.push((x + 2, y, x + 1, y)); }
+            if y >= 3 && m.wall[(y - 2) * n + x] { nb.push((x, y - 2, x, y - 1)); }
+            if y + 2 < n - 1 && m.wall[(y + 2) * n + x] { nb.push((x, y + 2, x, y + 1)); }
+            if nb.is_empty() { stack.pop(); } else {
+                let (nx, ny, wx, wy) = nb[(self.rnd() % nb.len() as u64) as usize];
+                m.wall[wy * n + wx] = false; m.wall[ny * n + nx] = false; stack.push((nx, ny));
+            }
+        }
+        // quelques passages en plus pour eviter les culs-de-sac forces
+        for _ in 0..16 {
+            let x = 1 + (self.rnd() % (n as u64 - 2)) as usize;
+            let y = 1 + (self.rnd() % (n as u64 - 2)) as usize;
+            let h = !m.wall[y * n + x - 1] && !m.wall[y * n + x + 1];
+            let v = !m.wall[(y - 1) * n + x] && !m.wall[(y + 1) * n + x];
+            if m.wall[y * n + x] && (h || v) { m.wall[y * n + x] = false; }
+        }
+        let d0 = bfs(&m.wall, 1, 1);
+        // coffre = case la plus eloignee du depart
+        let mut far = (1usize, 1usize, 0i32);
+        for y in 0..n { for x in 0..n { if d0[y * n + x] > far.2 { far = (x, y, d0[y * n + x]); } } }
+        m.chest = (far.0, far.1);
+        // nextbots : loin du depart, espaces entre eux, arrivent l'un apres l'autre
+        let mut spots: Vec<(usize, usize)> = vec![];
+        for tries in 0..400 {
+            if spots.len() >= BOT_N { break; }
+            let x = 1 + (self.rnd() % (n as u64 - 2)) as usize;
+            let y = 1 + (self.rnd() % (n as u64 - 2)) as usize;
+            let need = if tries < 300 { 10 } else { 6 };
+            if m.wall[y * n + x] || d0[y * n + x] < need || (x, y) == m.chest { continue; }
+            if spots.iter().any(|&(a, b)| (a as i32 - x as i32).abs() + (b as i32 - y as i32).abs() < 5) { continue; }
+            spots.push((x, y));
+        }
+        for (i, &(x, y)) in spots.iter().enumerate() {
+            let (cx, cy) = (x as f32 + 0.5, y as f32 + 0.5);
+            m.bots.push(Bot { x: cx, y: cy, tx: cx, ty: cy, delay: 3.0 + i as f32 * 2.5, spd: 1.9 + 0.1 * i as f32 });
+        }
+        m
+    }
+    fn tick_maze(&mut self, dt: f32) {
+        let before = self.mz.state;
+        self.mz.update(dt);
+        if before == Mz::Play {
+            match self.mz.state {
+                Mz::Wasted => { self.g.money = 0.0; self.save(); }
+                Mz::Won => {
+                    let b = self.g.money * 5.0;
+                    self.mz.bonus = b;
+                    self.earn(b);
+                    self.save();
+                }
+                Mz::Play => {}
+            }
+        }
+    }
+    fn tap_maze(&mut self, x: f32, y: f32, s: f32) {
+        if self.mz.state == Mz::Play {
+            let (dx, dy) = (x - self.w / 2.0, y - self.h / 2.0);
+            let d = dx.hypot(dy);
+            if d < 14.0 * s { self.mz.hx = 0.0; self.mz.hy = 0.0; }
+            else { self.mz.hx = dx / d; self.mz.hy = dy / d; }
+            self.mz.mark = (x, y, 0.4);
+        } else if self.mz.st > 1.5 {
+            self.scr = Scr::Game;
+        }
+    }
+    fn r_maze(&mut self, ctx: &Ctx, g: &mut Gfx) {
+        let s = ctx.scale();
+        let (w, h) = (self.w, self.h);
+        let m = &self.mz;
+        fill(g, rc(0.0, 0.0, w, h), rgb(0x2A2510));
+        let (ox, oy) = (w / 2.0 - m.px * TS, h / 2.0 - m.py * TS);
+        let x0 = (((0.0 - ox) / TS).floor() as i32).max(0) as usize;
+        let x1 = (((w - ox) / TS).ceil() as i32).clamp(0, MN as i32) as usize;
+        let y0 = (((0.0 - oy) / TS).floor() as i32).max(0) as usize;
+        let y1 = (((h - oy) / TS).ceil() as i32 + 1).clamp(0, MN as i32) as usize;
+        // sol (style backrooms)
+        for ty in y0..y1 { for tx in x0..x1 {
+            if m.wall[ty * MN + tx] { continue; }
+            let c = if (tx + ty) % 2 == 0 { 0xC9B75C } else { 0xBFAD52 };
+            fill(g, rc(ox + tx as f32 * TS, oy + ty as f32 * TS, TS + 1.0, TS + 1.0), rgb(c));
+        } }
+        // coffre
+        let (cx, cy) = (ox + (m.chest.0 as f32 + 0.5) * TS, oy + (m.chest.1 as f32 + 0.5) * TS);
+        disc(g, cx, cy, TS * 0.45, rgba(0x2ECC40, 0.35));
+        rfill(g, rc(cx - 16.0, cy - 11.0, 32.0, 22.0), 4.0, rgb(0x8B5A2B));
+        fill(g, rc(cx - 16.0, cy - 3.0, 32.0, 5.0), rgb(0xFFD700));
+        rfill(g, rc(cx - 3.0, cy - 5.0, 6.0, 9.0), 2.0, rgb(0xFFD700));
+        // marqueur du dernier appui
+        if m.mark.2 > 0.0 { disc(g, m.mark.0, m.mark.1, 8.0 * s, rgba(0xFFFFFF, m.mark.2)); }
+        // joueur
+        let (ppx, ppy) = (w / 2.0, h / 2.0);
+        disc(g, ppx, ppy + 4.0, PR * TS, rgba(0x000000, 0.3));
+        disc(g, ppx, ppy, PR * TS, rgb(0x2E86DE));
+        disc(g, ppx - 4.0, ppy - 4.0, PR * TS * 0.35, rgba(0xFFFFFF, 0.6));
+        // nextbots
+        for (i, b) in m.bots.iter().enumerate() {
+            let (bx, by) = (ox + b.x * TS, oy + b.y * TS);
+            if bx < -60.0 || bx > w + 60.0 || by < -60.0 || by > h + 60.0 { continue; }
+            let a = if b.delay > 0.0 { 0.35 } else { 1.0 };
+            disc(g, bx, by + 5.0, 22.0, rgba(0x000000, 0.3 * a));
+            match self.bot_pics.get(i).and_then(|p| p.as_ref()) {
+                Some(p) => { let (pw, ph) = (p.width() as f32, p.height() as f32); g.image(&format!("bot{}", i), p, bx - pw / 2.0, by - ph / 2.0, a); }
+                None => disc(g, bx, by, 20.0, rgba(0xE02020, a)),
+            }
+        }
+        // murs surelevres (effet 2.5D)
+        for ty in y0..y1 { for tx in x0..x1 {
+            if !m.wall[ty * MN + tx] { continue; }
+            let (sx, sy) = (ox + tx as f32 * TS, oy + ty as f32 * TS);
+            if ty + 1 < MN && !m.wall[(ty + 1) * MN + tx] { fill(g, rc(sx, sy + TS - 14.0, TS + 1.0, 14.0), rgb(0x3A3318)); }
+            fill(g, rc(sx, sy - 14.0, TS + 1.0, TS + 1.0), rgb(0x6B5E2A));
+            fill(g, rc(sx, sy - 14.0, TS + 1.0, 3.0), rgb(0x8A7B3A));
+        } }
+        // mini-carte ronde : nous = rouge, coffre = vert
+        let r = 46.0 * s;
+        let (mx, my) = (w - r - 8.0 * s, r + 8.0 * s);
+        disc(g, mx, my, r + 2.0 * s, rgba(0xFFFFFF, 0.8));
+        disc(g, mx, my, r, rgba(0x000000, 0.78));
+        let c = r * 1.4 / MN as f32;
+        let (mox, moy) = (mx - c * MN as f32 / 2.0, my - c * MN as f32 / 2.0);
+        for ty in 0..MN { for tx in 0..MN {
+            if m.wall[ty * MN + tx] { fill(g, rc(mox + tx as f32 * c, moy + ty as f32 * c, c + 0.5, c + 0.5), rgb(0xB8B8B8)); }
+        } }
+        let dr = (c * 0.9).max(2.5 * s);
+        disc(g, mox + (m.chest.0 as f32 + 0.5) * c, moy + (m.chest.1 as f32 + 0.5) * c, dr, rgb(0x2ECC40));
+        disc(g, mox + m.px * c, moy + m.py * c, dr, rgb(0xFF2020));
+        if m.t < 6.0 && m.state == Mz::Play {
+            ctx.text_mid(g, "Touche l'écran pour te diriger", w / 2.0, h - 24.0 * s, &t(12.0 * s, rgba(0xFFFFFF, 0.9)));
+            ctx.text_mid(g, "Trouve le coffre vert !", w / 2.0, h - 42.0 * s, &t(12.0 * s, rgba(0x2ECC40, 0.9)));
+        }
+        let a = (m.st / 0.6).min(1.0);
+        match m.state {
+            Mz::Wasted => {
+                fill(g, rc(0.0, 0.0, w, h), rgba(0x000000, 0.45 * a));
+                fill(g, rc(0.0, h / 2.0 - 60.0 * s, w, 120.0 * s), rgba(0x000000, 0.6 * a));
+                ctx.text_mid(g, "WASTED", w / 2.0, h / 2.0 - 22.0 * s, &t(54.0 * s, rgba(0xD01010, a)));
+                ctx.text_mid(g, "The devil made a pact with you;", w / 2.0, h / 2.0 + 20.0 * s, &t(12.0 * s, rgba(0xFFFFFF, a)));
+                ctx.text_mid(g, "he's the one who won", w / 2.0, h / 2.0 + 38.0 * s, &t(12.0 * s, rgba(0xFFFFFF, a)));
+                if m.st > 1.5 { ctx.text_mid(g, "Touche pour continuer", w / 2.0, h / 2.0 + 78.0 * s, &t(11.0 * s, rgba(0xAAAAAA, 1.0))); }
+            }
+            Mz::Won => {
+                fill(g, rc(0.0, 0.0, w, h), rgba(0x002A08, 0.55 * a));
+                ctx.text_mid(g, "YOU WON !!", w / 2.0, h / 2.0 - 14.0 * s, &t(42.0 * s, rgba(0x2ECC40, a)));
+                ctx.text_mid(g, &format!("+500%  (+${})", fmt(m.bonus)), w / 2.0, h / 2.0 + 28.0 * s, &t(16.0 * s, rgba(0xFFD700, a)));
+                if m.st > 1.5 { ctx.text_mid(g, "Touche pour continuer", w / 2.0, h / 2.0 + 62.0 * s, &t(11.0 * s, rgba(0xDDDDDD, 1.0))); }
+            }
+            Mz::Play => {}
         }
     }
     fn gen_num(&mut self) -> String {
@@ -152,6 +411,8 @@ impl Capi {
         self.code.clear();
         match c.as_str() {
             "elon" => { self.elon_t = 5.0; ctx.toast("ELON prend le contrôle !"); }
+            // mini-jeu labyrinthe + nextbots
+            "game" => { self.clear_pop(); self.mz = self.new_maze(); self.scr = Scr::Maze; return; }
             "stonks" => {
                 if self.g.used & 1 == 0 { self.g.used |= 1; self.g.mult *= 2.0; ctx.toast("STONKS ! Clic +100%"); }
                 else { ctx.toast("Code déjà utilisé"); return; }
@@ -175,11 +436,6 @@ impl Capi {
                 self.clear_pop();
                 self.g.money = 0.0;
                 self.cheat_t = 5.0;
-            }
-            "anticheat" => {
-                self.clear_pop();
-                self.g.money = 999999.0;
-                self.anticheat_t = 5.0;
             }
             _ => { ctx.toast("Code invalide"); return; }
         }
@@ -362,9 +618,6 @@ impl Capi {
         if self.cheat_t > 0.0 {
             self.overlay(ctx, g, "cheat", None, &[("uncle sam", 34.0, 0xFF3030), ("is", 34.0, 0xFF3030), ("desapointed", 34.0, 0xFF3030)], self.cheat_t, 5.0);
         }
-        if self.anticheat_t > 0.0 {
-            self.overlay(ctx, g, "cheat", None, &[("uncle sam", 34.0, 0xFF3030), ("is", 34.0, 0xFF3030), ("proud", 34.0, 0xFF3030)], self.anticheat_t, 5.0);
-        }
         self.tax_banner(ctx, g);
     }
 }
@@ -382,6 +635,7 @@ impl App for Capi {
             Scr::Menu => self.r_menu(ctx, g),
             Scr::Code => self.r_code(ctx, g),
             Scr::Random => self.r_random(ctx, g),
+            Scr::Maze => self.r_maze(ctx, g),
         }
     }
 
@@ -397,7 +651,6 @@ impl App for Capi {
                 self.pic_t = (self.pic_t - dt).max(0.0);
                 self.ussr_t = (self.ussr_t - dt).max(0.0);
                 self.cheat_t = (self.cheat_t - dt).max(0.0);
-                self.anticheat_t = (self.anticheat_t - dt).max(0.0);
                 self.tax_t = (self.tax_t - dt).max(0.0);
                 self.pulse = (self.pulse - dt * 6.0).max(0.0);
                 for f in self.floats.iter_mut() { f.2 += dt; }
@@ -415,6 +668,7 @@ impl App for Capi {
                 self.scroll.update(dt);
                 ctx.animate();
             }
+            Scr::Maze => { self.tick_maze(dt.min(0.05)); ctx.animate(); }
             Scr::Random => {
                 self.rand_t += dt;
                 if self.rand_list.is_empty() || self.rand_t >= 2.0 {
@@ -483,6 +737,7 @@ impl App for Capi {
                     }
                 }
             }
+            (Scr::Maze, Event::Tap { x, y }) => self.tap_maze(x, y, s),
             (Scr::Random, Event::Tap { x, y }) => {
                 if self.back.map_or(false, |b| hit(&b, x, y)) { self.scr = Scr::Title; }
             }
@@ -512,6 +767,7 @@ impl App for Capi {
             Scr::Game => { self.save(); self.scr = Scr::Title; true }
             Scr::Menu => { self.scr = Scr::Game; true }
             Scr::Code => { self.scr = Scr::Menu; true }
+            Scr::Maze => { self.scr = Scr::Game; true }
             _ => { self.scr = Scr::Title; true }
         }
     }

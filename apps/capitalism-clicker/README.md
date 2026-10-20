@@ -13,6 +13,7 @@ Game made by Ziyad.K for the phone with Alexis.R
   "Adaptateurs SDK" en haut de src/main.rs.
 - Bouton Menu en jeu : Code, Save (sauvegarde la partie), Menu principal
 - Code : clavier AZERTY a l'ecran (on appuie sur les touches), puis Valider
+- Code "game" : mini-jeu labyrinthe (vue de dessus 2.5D) avec 5 nextbots (assets/bot0..4.png). Touche l'ecran pour avancer dans cette direction, trouve le coffre vert (mini-carte ronde : toi en rouge, coffre en vert). Mort = WASTED + perte de tout l'argent, coffre = YOU WON !! et +500% d'argent
 - Codes : elon, stonks, freedom, random (image au hasard 5 s), stalin / lenin (drapeau URSS 5 s, -50% d'argent),
   cheat ("uncle sam is desapointed", -100% d'argent)
 - Ameliorations ajoutees : Scam, Trading (les anciennes sauvegardes sont converties automatiquement)
