@@ -235,3 +235,4 @@ impl Drop for AmenApp {
 
 fn main() {
     run(Config::new("Amen Breaks"), AmenApp::new());
+}
