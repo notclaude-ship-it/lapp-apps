@@ -1,6 +1,5 @@
 use lapp_sdk::prelude::*;
 use std::fs;
-use std::path::Path;
 use std::process::Child;
 
 struct AmenApp {
@@ -44,7 +43,7 @@ impl AmenApp {
             let _ = old.kill();
         }
         let full_path = lapp_sdk::app_path(&format!("assets/{}", name));
-        self.child = play_audio(&full_path);
+        self.child = lapp_sdk::audio::play_file(&full_path);
         self.playing_file = Some(name.to_string());
     }
 }
@@ -113,38 +112,6 @@ impl App for AmenApp {
             _ => {}
         }
     }
-}
-
-fn play_audio(path: &Path) -> Option<Child> {
-    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
-    let players: &[(&str, &[&str])] = if ext == "wav" {
-        &[
-            ("aplay", &["-q"]),
-            ("pw-play", &[]),
-            ("paplay", &[]),
-            ("mpv", &["--no-video", "--really-quiet"]),
-            ("play", &["-q"]),
-            ("ffplay", &["-nodisp", "-autoexit", "-loglevel", "quiet"]),
-        ]
-    } else {
-        &[
-            ("pw-play", &[]),
-            ("paplay", &[]),
-            ("mpv", &["--no-video", "--really-quiet"]),
-            ("play", &["-q"]),
-            ("ffplay", &["-nodisp", "-autoexit", "-loglevel", "quiet"]),
-            ("aplay", &["-q"]),
-        ]
-    };
-
-    for &(cmd, args) in players {
-        let mut c = std::process::Command::new(cmd);
-        c.args(args).arg(path);
-        if let Ok(child) = c.spawn() {
-            return Some(child);
-        }
-    }
-    None
 }
 
 impl Drop for AmenApp {
