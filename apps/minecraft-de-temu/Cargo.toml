@@ -13,4 +13,7 @@ codegen-units = 1
 panic = "abort"
 strip = true
 
+[build-dependencies]
+lapp-sdk = { path = "../../lapp-sdk" }
+
 [workspace]
