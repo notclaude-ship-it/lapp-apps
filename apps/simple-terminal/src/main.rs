@@ -17,7 +17,7 @@ impl SimpleTerminal {
             input_buffer: String::new(),
             output_lines: VecDeque::new(),
             scroller: Scroller::new(),
-            current_dir: lapp_sdk::sys::data_dir().to_string_lossy().into_owned(),
+            current_dir: lapp_sdk::data_dir().to_string_lossy().into_owned(),
         }
     }
 
@@ -183,7 +183,7 @@ fn main() {
     app.add_output("Utilisez 'cd ..' pour remonter. 'cd /app' pour voir les fichiers de l'app.".to_string());
     app.add_output("Note : Ceci est un exécuteur de commandes basique, pas un TTY interactif complet.".to_string());
     app.add_output("Il exécute les commandes via 'bash -c \"commande\"'.".to_string());
-    app.add_output(format!("Répertoire actuel : {}", lapp_sdk::sys::data_dir().to_string_lossy()));
+    app.add_output(format!("Répertoire actuel : {}", lapp_sdk::data_dir().to_string_lossy()));
 
     run(Config::new("Simple Terminal").edge_exit(false), app);
 }
