@@ -1,0 +1,9 @@
+manifest_version = 1
+id          = "com.exemple.spotify"
+name        = "Spotify"
+version     = "1.0.1"
+arch        = "aarch64"
+exec        = "bin/spotify"
+icon        = "icon.png"
+# display : écran | storage : /data | gpu : OpenGL ES | network : pochettes (http) | mpris : contrôle de spotifyd (D-Bus filtré)
+permissions = ["display", "storage", "gpu", "network", "mpris"]

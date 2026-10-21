@@ -1,0 +1,17 @@
+[package]
+name = "spotify"
+version = "1.0.1"
+edition = "2021"
+
+[dependencies]
+lapp-sdk = { path = "../../lapp-sdk" }
+jpeg-decoder = { version = "0.3", default-features = false }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[workspace]

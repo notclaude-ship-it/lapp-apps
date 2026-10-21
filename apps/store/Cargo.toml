@@ -1,0 +1,17 @@
+[package]
+name = "store"
+version = "1.0.2"
+edition = "2021"
+
+[dependencies]
+# Chemin vers le SDK : adaptez-le si le projet n'est pas dans ~/lapp/examples/store
+lapp-sdk = { path = "../../lapp-sdk" }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[workspace]

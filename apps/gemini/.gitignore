@@ -1,0 +1,4 @@
+target/
+stage/
+*.lapp
+.lapp-data/

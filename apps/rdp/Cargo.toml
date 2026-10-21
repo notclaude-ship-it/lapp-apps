@@ -1,0 +1,21 @@
+[package]
+name = "rdp"
+version = "1.0.0"
+edition = "2021"
+
+[dependencies]
+ironrdp = { version = "0.17", features = ["connector", "session", "input", "graphics", "pdu"] }
+ironrdp-blocking = "0.10"
+lapp-sdk = { path = "../../lapp-sdk" }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+sha2 = "0.10"
+x509-cert = { version = "0.2", default-features = false, features = ["std"] }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[workspace]

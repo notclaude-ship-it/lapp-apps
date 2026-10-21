@@ -1,0 +1,9 @@
+manifest_version = 1
+id          = "com.atalo.store"
+name        = "Store"
+version     = "1.0.2"
+arch        = "aarch64"
+exec        = "bin/store"
+icon        = "icon.png"
+# network : accès au serveur | install : monte le binaire lapp sur /lapp pour installer les paquets
+permissions = ["display", "storage", "gpu", "network", "install"]

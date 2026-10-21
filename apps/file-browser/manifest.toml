@@ -1,0 +1,8 @@
+manifest_version = 1
+id          = "com.exemple.files"
+name        = "Fichiers"
+version     = "1.0.0"
+arch        = "aarch64"
+exec        = "bin/files"
+icon        = "icon.png"
+permissions = ["display", "storage", "files", "gpu", "install"]

@@ -1,0 +1,12 @@
+[Unit]
+Description=Egaliseur lapp (filter-chain PipeWire)
+After=pipewire.service wireplumber.service
+Wants=pipewire.service
+
+[Service]
+ExecStart=/usr/bin/pipewire -c %h/.config/lapp/lapp-eq.conf
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target
