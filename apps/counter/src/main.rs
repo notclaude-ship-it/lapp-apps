@@ -1,0 +1,46 @@
+use lapp_sdk::prelude::*;
+
+struct MyApp {
+    store: Store,
+    count: i64,
+    pressed: bool,
+}
+
+impl MyApp {
+    fn button_rect(ctx: &Ctx) -> Rect {
+        let (w, h) = (ctx.width(), ctx.height());
+        let bw = w * 0.72;
+        Rect::new((w - bw) / 2.0, h * 0.45, bw, w * 0.2)
+    }
+}
+
+impl App for MyApp {
+    fn render(&mut self, ctx: &Ctx, g: &mut Gfx) {
+        let t = ctx.theme;
+        let s = ctx.scale();
+        g.clear(t.bg);
+        let head = ui::header(ctx, g, "Counter", None);
+        let big = Text::new(48.0 * s).bold().color(t.text).center();
+        ctx.text_mid(g, &self.count.to_string(), ctx.width() / 2.0, head.height + 90.0 * s, &big);
+        ui::button(ctx, g, Self::button_rect(ctx), "Incrementer", ButtonStyle::Primary, self.pressed);
+    }
+
+    fn event(&mut self, ctx: &Ctx, ev: Event) {
+        match ev {
+            Event::Down { x, y } => self.pressed = Self::button_rect(ctx).contains(x, y),
+            Event::Up { .. } => self.pressed = false,
+            Event::Tap { x, y } if Self::button_rect(ctx).contains(x, y) => {
+                self.count += 1;
+                let _ = self.store.set("count", self.count);
+                ctx.toast(format!("{} clic(s)", self.count));
+            }
+            _ => {}
+        }
+    }
+}
+
+fn main() {
+    let store = Store::open("state.conf");
+    let count = store.get_i64("count").unwrap_or(0);
+    run(Config::new("Counter"), MyApp { store, count, pressed: false });
+}

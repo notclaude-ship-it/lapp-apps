@@ -1,0 +1,8 @@
+manifest_version = 1
+id          = "com.moi.counter"
+name        = "Counter"
+version     = "1.0.0"
+arch        = "aarch64"
+exec        = "bin/counter"
+icon        = "icon.png"
+permissions = ["display", "storage", "gpu"]
