@@ -737,6 +737,9 @@ impl CitraApp {
         if self.dir.parent().is_some() {
             y = self.row(ctx, g, y, "‹ Dossier parent", None, Action::ExplorerUp);
         }
+        if Path::new("/host").is_dir() && self.dir != PathBuf::from("/host") {
+            y = self.row(ctx, g, y, "📁 Fichiers hôte (/host)", None, Action::ExplorerGo(PathBuf::from("/host")));
+        }
         let entries = self.entries.clone();
         if entries.is_empty() {
             self.centered(ctx, g, y + 40.0 * s, "Aucun dossier ni ROM ici", 14.0, false, t.subtext);
