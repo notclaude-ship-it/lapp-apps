@@ -5,5 +5,4 @@ version     = "1.0.0"
 arch        = "aarch64"
 exec        = "bin/terminal"
 icon        = "icon.png"
-# display : écran | storage : /data | gpu : OpenGL ES (partage le réseau) | audio | network | files | system | install
-permissions = ["display", "storage", "gpu", "network"]
+permissions = ["display", "storage", "system", "files", "network"]

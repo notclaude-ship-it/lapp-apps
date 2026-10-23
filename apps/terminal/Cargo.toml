@@ -5,7 +5,6 @@ edition = "2021"
 
 [dependencies]
 lapp-sdk = { path = "../../lapp-sdk" }
-libc = "0.2"
 
 [profile.release]
 opt-level = 3
