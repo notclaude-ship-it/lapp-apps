@@ -308,6 +308,7 @@ impl App for TerminalApp {
             Event::Down { .. } => {
                 self.scroller.stop();
             }
+            _ => {}
             Event::Key(key) => {
                 match key {
                     Key::Char(ch) => {
