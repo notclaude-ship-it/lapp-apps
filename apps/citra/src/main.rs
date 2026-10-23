@@ -251,6 +251,42 @@ struct CitraApp {
     log_lines: Vec<String>,
 }
 
+fn resolve_host_path(path: &Path) -> PathBuf {
+    if !path.starts_with("/host") {
+        return path.to_path_buf();
+    }
+    let Ok(rel) = path.strip_prefix("/host") else {
+        return path.to_path_buf();
+    };
+    let mut current = PathBuf::from("/host");
+    for comp in rel.components() {
+        current.push(comp);
+        let mut depth = 0;
+        while depth < 10 {
+            if let Ok(meta) = fs::symlink_metadata(&current) {
+                if meta.file_type().is_symlink() {
+                    if let Ok(target) = fs::read_link(&current) {
+                        if target.is_absolute() {
+                            if let Ok(without_slash) = target.strip_prefix("/") {
+                                current = PathBuf::from("/host").join(without_slash);
+                            } else {
+                                break;
+                            }
+                        } else {
+                            current.pop();
+                            current.push(target);
+                        }
+                        depth += 1;
+                        continue;
+                    }
+                }
+            }
+            break;
+        }
+    }
+    current
+}
+
 fn config_dir() -> PathBuf {
     data_dir().join("config").join("azahar-emu")
 }
@@ -268,12 +304,14 @@ impl CitraApp {
             .lines()
             .filter(|l| !l.is_empty())
             .map(PathBuf::from)
+            .map(|p| resolve_host_path(&p))
             .collect();
         let start = store
             .get("last_dir")
             .map(PathBuf::from)
+            .map(|p| resolve_host_path(&p))
             .filter(|p| p.is_dir())
-            .or_else(|| ["/host/home", "/host"].iter().map(PathBuf::from).find(|p| p.is_dir()))
+            .or_else(|| ["/host/home", "/host"].iter().map(PathBuf::from).map(|p| resolve_host_path(&p)).find(|p| p.is_dir()))
             .unwrap_or_else(|| PathBuf::from("/"));
         let mut a = CitraApp {
             store,
@@ -309,6 +347,7 @@ impl CitraApp {
     }
 
     fn refresh_dir(&mut self) {
+        self.dir = resolve_host_path(&self.dir);
         let mut v: Vec<(String, PathBuf, bool)> = vec![];
         if let Ok(rd) = fs::read_dir(&self.dir) {
             for e in rd.flatten() {
@@ -394,6 +433,7 @@ impl CitraApp {
             return;
         }
         let Some(path) = self.roms.get(idx).cloned() else { return };
+        let path = resolve_host_path(&path);
         if !path.exists() {
             ctx.toast("ROM introuvable (déplacée ?)");
             return;
@@ -574,19 +614,20 @@ impl CitraApp {
             }
             Action::ExplorerUp => {
                 if let Some(p) = self.dir.parent() {
-                    self.dir = p.to_path_buf();
+                    self.dir = resolve_host_path(p);
                     let _ = self.store.set("last_dir", self.dir.to_string_lossy());
                     self.refresh_dir();
                     self.scroll = Scroller::new();
                 }
             }
             Action::ExplorerGo(p) => {
-                self.dir = p;
+                self.dir = resolve_host_path(&p);
                 let _ = self.store.set("last_dir", self.dir.to_string_lossy());
                 self.refresh_dir();
                 self.scroll = Scroller::new();
             }
             Action::ExplorerPick(p) => {
+                let p = resolve_host_path(&p);
                 if !self.roms.contains(&p) {
                     self.roms.insert(0, p.clone());
                     self.save_roms();

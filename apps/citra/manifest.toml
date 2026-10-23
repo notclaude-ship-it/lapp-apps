@@ -1,7 +1,7 @@
 manifest_version = 1
 id          = "com.exemple.citra"
 name        = "Citra"
-version     = "1.0.1"
+version     = "1.0.2"
 arch        = "aarch64"
 exec        = "bin/citra"
 icon        = "icon.png"
