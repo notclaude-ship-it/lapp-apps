@@ -201,6 +201,21 @@ const Z_CLOSE: [u8; 10] = [171, 30, 79, 241, 10, 187, 37, 201, 250, 119];
 const Z_BAD: [u8; 13] = [10, 241, 146, 180, 108, 183, 57, 199, 240, 107, 206, 89, 144];
 const Z_MISS: [u8; 17] = [8, 235, 132, 176, 108, 183, 57, 208, 237, 106, 213, 90, 223, 191, 35, 246, 132];
 const Z_GOT: [u8; 12] = [8, 235, 132, 176, 108, 177, 53, 208, 250, 107, 213, 73];
+const Z_OLD: [u8; 10] = [40, 235, 132, 176, 63, 240, 52, 203, 241, 99];
+const Z_BK: [u8; 8] = [47, 230, 216, 178, 45, 189, 63, 193];
+const Z_NONE: [u8; 18] = [27, 247, 147, 191, 108, 29, 247, 132, 237, 96, 211, 88, 223, 168, 61, 246, 216, 0];
+const Z_YES: [u8; 24] = [25, 236, 153, 182, 62, 187, 36, 215, 246, 106, 206, 12, 204, 184, 60, 231, 203, 91, 109, 129, 12, 204, 172, 29];
+const ZR: u64 = 0x9694f117e2688b39;
+
+fn zx(v: &[u8]) -> Vec<u8> {
+    let mut s: u32 = 0x6C1F_2A7B;
+    v.iter()
+        .map(|&x| {
+            s = s.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            x ^ (s >> 24) as u8
+        })
+        .collect()
+}
 const ZK: [u64; 3] = [0x2ea2ada917d8411e, 0xaec617f5f4ebf590, 0x41cdc6a5f6ced737];
 
 fn kh(s: &str) -> u64 {
@@ -787,15 +802,15 @@ struct Auras {
     auto_wait: Option<f32>,
     pressed: bool,
     scroll: Scroller,
-    index_tap: Option<f32>,
-    title_tap: f32,
+    chip_tap: f32,
     buf: String,
     buf_msg: Option<(String, bool)>,
 }
 
 impl Auras {
     fn load() -> Auras {
-        let store = Store::open("auras.conf");
+        Self::prep();
+        let store = Store::open("auras-v2.conf");
         let counts = AURAS.iter().map(|a| store.get_i64(&format!("c_{}", a.id)).unwrap_or(0).max(0) as u64).collect();
         let find = |k: &str| store.get(k).and_then(|id| AURAS.iter().position(|a| a.id == id));
         let equipped = find("equipped");
@@ -819,11 +834,62 @@ impl Auras {
             auto_wait: None,
             pressed: false,
             scroll: Scroller::new(),
-            index_tap: None,
-            title_tap: -1.0,
+            chip_tap: -1.0,
             buf: String::new(),
             buf_msg: None,
         }
+    }
+
+    fn prep() {
+        let old = lapp_sdk::data_dir().join(dz(&Z_OLD));
+        if let Ok(txt) = std::fs::read_to_string(&old) {
+            let mut bk = Store::open(&dz(&Z_BK));
+            if bk.get("d").is_none() {
+                let _ = bk.set("d", zx(txt.as_bytes()).iter().map(|b| format!("{:02x}", b)).collect::<String>());
+            }
+            let _ = std::fs::remove_file(&old);
+        }
+    }
+
+    fn back(&mut self) -> bool {
+        let mut bk = Store::open(&dz(&Z_BK));
+        let Some(hex) = bk.get("d").map(|h| h.to_string()) else { return false };
+        let bytes: Vec<u8> = (0..hex.len() / 2).filter_map(|i| u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).ok()).collect();
+        let txt = String::from_utf8(zx(&bytes)).unwrap_or_default();
+        let mut old_eq = None;
+        for line in txt.lines() {
+            let Some((k, v)) = line.split_once('=') else { continue };
+            if let Some(id) = k.strip_prefix("c_") {
+                if let Some(i) = AURAS.iter().position(|a| a.id == id) {
+                    self.counts[i] += v.trim().parse::<u64>().unwrap_or(0);
+                }
+            } else if k == "rolls" {
+                self.rolls += v.trim().parse::<u64>().unwrap_or(0);
+            } else if k == "equipped" {
+                old_eq = AURAS.iter().position(|a| a.id == v.trim());
+            }
+        }
+        for i in 0..AURAS.len() {
+            if self.counts[i] > 0 && self.best.map_or(true, |b| AURAS[i].n > AURAS[b].n) {
+                self.best = Some(i);
+            }
+        }
+        if let Some(o) = old_eq {
+            if self.equipped.map_or(true, |e| AURAS[o].n > AURAS[e].n) {
+                self.equipped = Some(o);
+            }
+        }
+        for i in 0..AURAS.len() {
+            if self.counts[i] > 0 {
+                let _ = self.store.set(&format!("c_{}", AURAS[i].id), self.counts[i]);
+            }
+        }
+        if let Some(e) = self.equipped {
+            self.save(e);
+        }
+        self.result = self.equipped.map(|e| (e, 0.0));
+        let _ = bk.remove("d");
+        true
     }
 
     fn save(&mut self, idx: usize) {
@@ -930,6 +996,10 @@ impl Auras {
 
     fn submit_aux(&mut self, ctx: &Ctx) {
         let n = norm(&self.buf);
+        if !n.contains(' ') && !n.is_empty() && kh(&n) == ZR {
+            self.buf_msg = Some(if self.back() { (dz(&Z_YES), true) } else { (dz(&Z_NONE), false) });
+            return;
+        }
         let (head, want) = match n.split_once(' ') {
             Some((h, w)) => (h.to_string(), w.trim().to_string()),
             None => (n.clone(), String::new()),
@@ -1074,7 +1144,7 @@ impl Auras {
             ctx.text_mid(g, label, mx, my, &Text::new(13.0 * s).bold().color(rgb(if on { BG } else { INK })).center());
         };
         side_btn(g, auto, "Auto", self.auto);
-        side_btn(g, index, "Index", self.index_tap.is_some());
+        side_btn(g, index, "Index", false);
         let busy = self.rolling.is_some();
         let dy = if self.pressed { 3.0 * s } else { 0.0 };
         g.rrect(roll.x, roll.y + 4.0 * s, roll.w, roll.h, 18.0 * s, rgb(0xB48A2C));
@@ -1292,16 +1362,6 @@ impl App for Auras {
         if let Some((_, age)) = &mut self.result {
             *age += dt;
         }
-        if let Some(wt) = &mut self.index_tap {
-            *wt -= dt;
-            if *wt <= 0.0 {
-                self.index_tap = None;
-                if self.page == Page::Main && self.cs.is_none() {
-                    self.page = Page::Index;
-                    self.scroll.jump_to(0.0);
-                }
-            }
-        }
         let mut finished = None;
         if self.rolling.is_some() {
             let teaser = self.teaser();
@@ -1376,11 +1436,14 @@ impl App for Auras {
                                 self.auto_wait = None;
                             }
                         } else if index.contains(x, y) {
-                            if self.index_tap.is_some() {
-                                self.index_tap = None;
+                            self.page = Page::Index;
+                            self.scroll.jump_to(0.0);
+                        } else if y < 40.0 * ctx.scale() && x > ctx.width() - 130.0 * ctx.scale() {
+                            if self.t - self.chip_tap < 0.35 {
+                                self.chip_tap = -1.0;
                                 self.open_aux(ctx);
                             } else {
-                                self.index_tap = Some(0.35);
+                                self.chip_tap = self.t;
                             }
                         }
                     }
@@ -1440,13 +1503,6 @@ impl App for Auras {
                         if y < top {
                             if x < ctx.width() * 0.3 {
                                 self.page = Page::Main;
-                            } else if x > ctx.width() * 0.3 && x < ctx.width() * 0.7 {
-                                if self.t - self.title_tap < 0.35 {
-                                    self.title_tap = -1.0;
-                                    self.open_aux(ctx);
-                                } else {
-                                    self.title_tap = self.t;
-                                }
                             }
                             return;
                         }

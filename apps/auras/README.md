@@ -6,7 +6,7 @@ chance est doublée. L'aura équipée donne un bonus sur les auras de son type (
 les auras Plante ; Glitch, Créateur et Infini boostent toutes les auras). Chaque nouvelle aura a
 sa cinématique, et l'Index permet d'équiper une aura ou de revoir son animation.
 
-Progression enregistrée dans /data/auras.conf.
+Progression enregistrée dans /data/auras-v2.conf.
 
 ## Installation
 
@@ -15,8 +15,8 @@ Décompressez ce dossier à côté du SDK, pour obtenir `~/lapp/auras` et `~/lap
 
     cd ~/lapp/auras
     cargo run -- --screenshot out.png     # aperçu hors écran
-    ~/lapp/sdk/tools/lapp-build           # produit com.alexi.auras-1.2.0.lapp
-    sudo ~/lapp/target/release/lapp install com.alexi.auras-1.2.0.lapp
+    ~/lapp/sdk/tools/lapp-build           # produit com.alexi.auras-1.3.0.lapp
+    sudo ~/lapp/target/release/lapp install com.alexi.auras-1.3.0.lapp
 
 Captures de test : `--equip galaxie`, `--page index [--detail 17]`,
 `--cs infini --t 6`.
