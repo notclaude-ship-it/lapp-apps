@@ -1,0 +1,17 @@
+[package]
+name = "auras"
+version = "1.1.0"
+edition = "2021"
+
+[dependencies]
+# Chemin vers le SDK : ce dossier doit être placé à côté de lapp-sdk (~/lapp/sdk -> ../sdk)
+lapp-sdk = { path = "../../lapp-sdk" }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[workspace]
