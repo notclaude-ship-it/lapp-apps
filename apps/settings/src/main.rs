@@ -2,17 +2,19 @@
 //
 // - Luminosité : /sys/class/backlight/* ; Volume : PipeWire (wpctl), repli ALSA (amixer) ; Informations : appareil, noyau, mémoire, stockage, batterie, IP
 // - Wi-Fi : activer/désactiver, lister les réseaux, se connecter (mot de passe au clavier virtuel de lapp-home), déconnecter, oublier
-//   (NetworkManager : nmcli est lancé sur l'hôte via le courtier de commandes, voir wifi.rs)
+//   (NetworkManager : `sudo nmcli` est lancé sur l'hôte via le courtier de commandes, voir wifi.rs ; le mot de passe sudo
+//   est demandé s'il est inconnu, puis enregistré, voir sudo.rs)
 // - Bluetooth : activer/désactiver, rechercher, jumeler, connecter, déconnecter, oublier
 //   (BlueZ : bluetoothctl est lancé sur l'hôte via le courtier de commandes, voir bluetooth.rs)
 // - quitter : glisser vers le haut depuis le bord bas de l'écran, ou Echap
-// Permissions : display, system (/sys en écriture + /dev/snd), network (adresse IP), storage, commands (nmcli, bluetoothctl, rfkill).
-// Tests hors écran : settings --screenshot out.png [--page info|wifi|wifinet|wifipass|bt|btdev] [--demo] ; settings --icon icon.png
+// Permissions : display, system (/sys en écriture + /dev/snd), network (adresse IP), storage, commands (sudo pour le Wi-Fi, bluetoothctl, rfkill).
+// Tests hors écran : settings --screenshot out.png [--page info|wifi|wifinet|wifipass|sudo|sudowrong|bt|btdev] [--demo] ; settings --icon icon.png
 
 mod bluetooth;
 mod gfx;
 mod hostcmd;
 mod kbd;
+mod sudo;
 mod wifi;
 
 use std::fs;
@@ -69,6 +71,9 @@ const NET_INFO_H: f32 = 84.0;
 const NET_NEXT_Y: f32 = NET_INFO_Y + NET_INFO_H + 10.0;
 const PASS_H: f32 = 46.0;
 const BTN_H: f32 = 44.0;
+/// page du mot de passe sudo : champ et bouton
+const SUDO_PASS_Y: f32 = HEADER + 78.0;
+const SUDO_BTN_Y: f32 = SUDO_PASS_Y + PASS_H + 10.0;
 
 // ------------------------------------------------------------------ dessin (pixmaps)
 
@@ -532,6 +537,7 @@ enum Page {
     Info,
     Wifi,
     WifiNet,
+    Sudo,
     Bt,
     BtDev,
 }
@@ -605,6 +611,12 @@ struct App {
     busy: Option<String>,
     inbox: Arc<Mutex<Vec<wifi::Done>>>,
     kbd: Option<kbd::KbdClient>,
+    // mot de passe sudo (demandé quand une commande Wi-Fi en a besoin)
+    sudo_pw: String,
+    sudo_show: bool,
+    sudo_wrong: bool,
+    sudo_retry: Option<(wifi::Action, bool)>,
+    sudo_from: Page,
     // Bluetooth
     bt: Option<bluetooth::State>,
     bt_err: Option<String>,
@@ -645,6 +657,11 @@ impl App {
             busy: None,
             inbox: Arc::new(Mutex::new(Vec::new())),
             kbd: None,
+            sudo_pw: String::new(),
+            sudo_show: false,
+            sudo_wrong: false,
+            sudo_retry: None,
+            sudo_from: Page::Wifi,
             bt: None,
             bt_err: None,
             bt_sel: None,
@@ -768,11 +785,51 @@ impl App {
             if d.back && self.page == Page::WifiNet {
                 self.leave_net();
             }
+            // pas de question au démarrage (page principale) : seulement quand l'utilisateur est dans le Wi-Fi
+            if let Some(su) = d.sudo {
+                if matches!(self.page, Page::Wifi | Page::WifiNet) {
+                    self.ask_sudo(su);
+                }
+            }
         }
         if self.jobs == 0 {
             self.busy = None;
         }
         true
+    }
+
+    /// Affiche la page du mot de passe sudo ; l'action `su.retry` sera relancée une fois le mot de passe saisi.
+    fn ask_sudo(&mut self, su: wifi::Sudo) {
+        self.sudo_from = self.page;
+        self.sudo_retry = Some((su.retry, su.rescan));
+        self.sudo_wrong = su.wrong;
+        self.sudo_pw.clear();
+        self.sudo_show = false;
+        self.page = Page::Sudo;
+        self.kbd_show();
+    }
+
+    fn submit_sudo(&mut self) {
+        if self.sudo_pw.is_empty() {
+            self.set_toast("Saisis le mot de passe sudo".into());
+            return;
+        }
+        // enregistré par sudo.rs dès que sudo l'accepte, oublié s'il est refusé
+        sudo::set(std::mem::take(&mut self.sudo_pw));
+        self.sudo_show = false;
+        self.kbd_hide();
+        self.page = self.sudo_from;
+        if let Some((act, rescan)) = self.sudo_retry.take() {
+            self.job("Authentification…", act, rescan);
+        }
+    }
+
+    fn cancel_sudo(&mut self) {
+        self.kbd_hide();
+        self.sudo_pw.clear();
+        self.sudo_show = false;
+        self.sudo_retry = None;
+        self.page = self.sudo_from;
     }
 
     fn open_wifi(&mut self) {
@@ -794,6 +851,7 @@ impl App {
         match self.page {
             Page::Info | Page::Wifi | Page::Bt => self.page = Page::Main,
             Page::WifiNet => self.leave_net(),
+            Page::Sudo => self.cancel_sudo(),
             Page::BtDev => self.leave_dev(),
             Page::Main => {}
         }
@@ -1017,6 +1075,7 @@ impl App {
             }
             Page::Wifi => self.tap_wifi(y),
             Page::WifiNet => self.tap_net(x, y),
+            Page::Sudo => self.tap_sudo(x, y),
             Page::Bt => self.tap_bt(y),
             Page::BtDev => self.tap_dev(x, y),
             Page::Info => {}
@@ -1049,6 +1108,25 @@ impl App {
             if n.needs_pass() {
                 self.kbd_show();
             }
+        }
+    }
+
+    fn tap_sudo(&mut self, x: f32, y: f32) {
+        let s = self.scale();
+        let w = self.size.0 as f32;
+        if self.jobs > 0 {
+            return;
+        }
+        if y >= SUDO_PASS_Y * s && y < (SUDO_PASS_Y + PASS_H) * s {
+            if x > w - 84.0 * s {
+                self.sudo_show = !self.sudo_show;
+            } else {
+                self.kbd_show();
+            }
+            return;
+        }
+        if x >= CARD_X * s && x <= w - CARD_X * s && y >= SUDO_BTN_Y * s && y < (SUDO_BTN_Y + BTN_H) * s {
+            self.submit_sudo();
         }
     }
 
@@ -1090,6 +1168,30 @@ impl App {
 
     /// Touches du clavier (physique, ou virtuel de lapp-home via XTEST).
     fn key(&mut self, el: &ActiveEventLoop, ev: &KeyEvent) {
+        if self.page == Page::Sudo {
+            match &ev.logical_key {
+                Key::Named(NamedKey::Backspace) => {
+                    self.sudo_pw.pop();
+                }
+                Key::Named(NamedKey::Enter) => {
+                    if self.jobs == 0 {
+                        self.submit_sudo();
+                    }
+                }
+                Key::Named(NamedKey::Escape) => self.back(),
+                _ => {
+                    if let Some(t) = &ev.text {
+                        for c in t.chars().filter(|c| !c.is_control()) {
+                            if self.sudo_pw.chars().count() < 128 {
+                                self.sudo_pw.push(c);
+                            }
+                        }
+                    }
+                }
+            }
+            self.redraw_later();
+            return;
+        }
         if self.page == Page::WifiNet && self.sel.as_ref().map(|n| n.needs_pass()).unwrap_or(false) {
             match &ev.logical_key {
                 Key::Named(NamedKey::Backspace) => {
@@ -1195,6 +1297,7 @@ impl App {
             Page::Info => self.render_info(g, s),
             Page::Wifi => self.render_wifi(g, s),
             Page::WifiNet => self.render_net(g, s),
+            Page::Sudo => self.render_sudo(g, s),
             Page::Bt => self.render_bt(g, s),
             Page::BtDev => self.render_dev(g, s),
         }
@@ -1273,6 +1376,7 @@ impl App {
         match (&self.wifi, &self.wifi_err) {
             (Some(st), _) if !st.enabled => "Désactivé".into(),
             (Some(st), _) => st.nets.iter().find(|n| n.active).map(|n| n.ssid.clone()).unwrap_or_else(|| "Non connecté".into()),
+            (None, Some(e)) if e == sudo::NEEDED || e == sudo::WRONG => "Droits requis".into(),
             (None, Some(_)) => "Indisponible".into(),
             (None, None) => "…".into(),
         }
@@ -1351,6 +1455,47 @@ impl App {
         self.txt(g, "Actualiser", w - 12.0 * s, (HEADER * s - 13.0 * s * 1.17) / 2.0, 13.0 * s, Kind::Reg, BLUE, Align::Right, None, false);
     }
 
+    /// Champ de mot de passe (points, ou texte si `show`) avec le bouton Afficher/Masquer.
+    fn pass_field(&self, g: &mut Gfx, s: f32, y: f32, pw: &str, show: bool) {
+        let w = self.size.0 as f32;
+        self.card(g, s, y, PASS_H);
+        let ty = (y + (PASS_H - 14.0 * 1.17) / 2.0) * s;
+        let (x0, x1) = (18.0 * s, w - 96.0 * s);
+        if pw.is_empty() {
+            self.txt(g, "Mot de passe", x0, ty, 14.0 * s, Kind::Reg, GREY, Align::Left, None, false);
+        } else if show {
+            self.txt(g, pw, x0, ty, 14.0 * s, Kind::Reg, DARK, Align::Left, Some(x1 - x0), true);
+        } else {
+            let step = 13.0 * s;
+            let max = ((x1 - x0) / step) as usize;
+            let count = pw.chars().count();
+            let skip = count.saturating_sub(max);
+            let cy = (y + PASS_H / 2.0) * s;
+            for i in 0..count - skip {
+                g.rrect(x0 + i as f32 * step, cy - 4.0 * s, 8.0 * s, 8.0 * s, 4.0 * s, col(DARK, 1.0));
+            }
+        }
+        let lbl = if show { "Masquer" } else { "Afficher" };
+        self.txt(g, lbl, w - 18.0 * s, (y + (PASS_H - 12.0 * 1.17) / 2.0) * s, 12.0 * s, Kind::Reg, BLUE, Align::Right, None, false);
+    }
+
+    fn render_sudo(&self, g: &mut Gfx, s: f32) {
+        let w = self.size.0 as f32;
+        let (title, tc) = if self.sudo_wrong { ("Mot de passe incorrect", RED) } else { ("Droits administrateur", DARK) };
+        self.txt(g, title, w / 2.0, (HEADER + 14.0) * s, 14.0 * s, Kind::Bold, tc, Align::Center, Some(w - 36.0 * s), false);
+        self.txt(g, "Le Wi-Fi utilise sudo. Le mot de passe", w / 2.0, (HEADER + 38.0) * s, 12.0 * s, Kind::Reg, GREY, Align::Center, Some(w - 24.0 * s), false);
+        self.txt(g, "est enregistré dès qu'il est accepté.", w / 2.0, (HEADER + 54.0) * s, 12.0 * s, Kind::Reg, GREY, Align::Center, Some(w - 24.0 * s), false);
+        self.pass_field(g, s, SUDO_PASS_Y, &self.sudo_pw, self.sudo_show);
+        let (bx, bw) = (CARD_X * s, w - 2.0 * CARD_X * s);
+        let bg = if self.sudo_pw.is_empty() { [0.62, 0.76, 0.96] } else { BLUE };
+        g.rrect(bx, SUDO_BTN_Y * s, bw, BTN_H * s, 10.0 * s, col(bg, 1.0));
+        self.txt(g, "Valider", w / 2.0, (SUDO_BTN_Y + (BTN_H - 15.0 * 1.17) / 2.0) * s, 15.0 * s, Kind::Bold, WHITE, Align::Center, Some(bw - 20.0 * s), false);
+        if let Some(b) = &self.busy {
+            self.txt(g, b, w / 2.0, (SUDO_BTN_Y + BTN_H + 12.0) * s, 12.0 * s, Kind::Reg, GREY, Align::Center, Some(w - 36.0 * s), false);
+        }
+        self.header(g, s, "Administrateur", true);
+    }
+
     fn render_net(&self, g: &mut Gfx, s: f32) {
         let w = self.size.0 as f32;
         let Some(n) = &self.sel else {
@@ -1381,25 +1526,7 @@ impl App {
         }
         // mot de passe
         if n.needs_pass() {
-            self.card(g, s, NET_NEXT_Y, PASS_H);
-            let ty = (NET_NEXT_Y + (PASS_H - 14.0 * 1.17) / 2.0) * s;
-            let (x0, x1) = (18.0 * s, w - 96.0 * s);
-            if self.pass.is_empty() {
-                self.txt(g, "Mot de passe", x0, ty, 14.0 * s, Kind::Reg, GREY, Align::Left, None, false);
-            } else if self.show_pass {
-                self.txt(g, &self.pass, x0, ty, 14.0 * s, Kind::Reg, DARK, Align::Left, Some(x1 - x0), true);
-            } else {
-                let step = 13.0 * s;
-                let max = ((x1 - x0) / step) as usize;
-                let count = self.pass.chars().count();
-                let skip = count.saturating_sub(max);
-                let cy = (NET_NEXT_Y + PASS_H / 2.0) * s;
-                for i in 0..count - skip {
-                    g.rrect(x0 + i as f32 * step, cy - 4.0 * s, 8.0 * s, 8.0 * s, 4.0 * s, col(DARK, 1.0));
-                }
-            }
-            let lbl = if self.show_pass { "Masquer" } else { "Afficher" };
-            self.txt(g, lbl, w - 18.0 * s, (NET_NEXT_Y + (PASS_H - 12.0 * 1.17) / 2.0) * s, 12.0 * s, Kind::Reg, BLUE, Align::Right, None, false);
+            self.pass_field(g, s, NET_NEXT_Y, &self.pass, self.show_pass);
         }
         // boutons
         let mut last = NET_NEXT_Y;
@@ -1837,6 +1964,12 @@ fn main() {
                 app.page = Page::Info;
             }
             Some("wifi") => app.page = Page::Wifi,
+            Some(p @ ("sudo" | "sudowrong")) => {
+                app.sudo_from = Page::Wifi;
+                app.sudo_wrong = p == "sudowrong";
+                app.sudo_pw = "motdepasse".into();
+                app.page = Page::Sudo;
+            }
             Some("bt") => app.page = Page::Bt,
             Some("btdev") => {
                 app.bt_sel = app.bt.as_ref().and_then(|st| st.devs.get(3).cloned());

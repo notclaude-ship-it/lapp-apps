@@ -1,9 +1,10 @@
-//! Wi-Fi via NetworkManager : `nmcli` est lancé sur l'hôte par le courtier de commandes (permission « commands »,
-//! `commands = ["nmcli"]` dans le manifeste). Tout ce module est bloquant : l'interface l'appelle dans un thread.
+//! Wi-Fi via NetworkManager : `sudo nmcli` est lancé sur l'hôte par le courtier de commandes (permission « commands »,
+//! `commands = ["sudo"]` dans le manifeste). Toutes les commandes passent par `sudo::run` (voir sudo.rs) : si le mot de
+//! passe est inconnu ou refusé, `Done::sudo` le signale et l'interface le demande puis relance l'action. Tout ce module est bloquant : l'interface l'appelle dans un thread.
 
 use std::time::Duration;
 
-use crate::hostcmd;
+use crate::sudo;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Net {
@@ -33,6 +34,7 @@ pub struct State {
     pub nets: Vec<Net>,
 }
 
+#[derive(Clone)]
 pub enum Action {
     /// rien d'autre que relire l'état
     None,
@@ -48,6 +50,16 @@ pub struct Done {
     pub state: Result<State, String>,
     /// l'action est terminée : l'interface peut quitter la page du réseau
     pub back: bool,
+    /// mot de passe sudo à demander avant de relancer l'action
+    pub sudo: Option<Sudo>,
+}
+
+pub struct Sudo {
+    /// le mot de passe qu'on avait a été refusé
+    pub wrong: bool,
+    /// l'action à relancer une fois le mot de passe saisi
+    pub retry: Action,
+    pub rescan: bool,
 }
 
 // ------------------------------------------------------------------ nmcli
@@ -72,11 +84,12 @@ fn nice_error(raw: &str) -> String {
     raw.trim_start_matches("Error:").trim().to_string()
 }
 
-/// `nmcli -w 30 <args>` ; `Ok(stdout)` si le code de sortie est 0.
+/// `sudo nmcli -w 30 <args>` ; `Ok(stdout)` si le code de sortie est 0.
+/// `Err(sudo::NEEDED)` / `Err(sudo::WRONG)` : mot de passe sudo à saisir (voir `sudo::take_need`).
 fn nm(args: &[&str]) -> Result<String, String> {
     let mut a: Vec<&str> = vec!["nmcli", "-w", "30"];
     a.extend_from_slice(args);
-    let o = hostcmd::run(&a, "")?;
+    let o = sudo::run(&a)?;
     if o.code == 0 {
         return Ok(o.out);
     }
@@ -191,6 +204,7 @@ pub fn state(rescan: bool) -> Result<State, String> {
 
 /// Exécute l'action puis relit l'état (avec ou sans nouveau balayage).
 pub fn run(a: Action, rescan: bool) -> Done {
+    let again = (a.clone(), rescan);
     let mut back = false;
     let mut rescan = rescan;
     let note = match a {
@@ -215,7 +229,7 @@ pub fn run(a: Action, rescan: bool) -> Done {
                     Some(Ok(format!("Connecté à {}", n.ssid)))
                 }
                 Err(e) => {
-                    if n.profile.is_none() && !pw.is_empty() {
+                    if n.profile.is_none() && !pw.is_empty() && e != sudo::NEEDED && e != sudo::WRONG {
                         // nmcli laisse un profil inutilisable quand le mot de passe est refusé
                         let _ = nm_sudo(&["connection", "delete", "id", &n.ssid]);
                     }
@@ -236,7 +250,12 @@ pub fn run(a: Action, rescan: bool) -> Done {
             Some(r.map(|_| format!("{} oublié", n.ssid)))
         }
     };
-    Done { note, state: state(rescan), back }
+    let state = state(rescan);
+    // mot de passe sudo requis ou refusé : l'interface le demande, puis relance l'action
+    if let Some(wrong) = sudo::take_need() {
+        return Done { note: None, state, back: false, sudo: Some(Sudo { wrong, retry: again.0, rescan: again.1 }) };
+    }
+    Done { note, state, back, sudo: None }
 }
 
 /// Réseaux factices pour les captures d'écran (`--demo`).
