@@ -4,13 +4,13 @@
 // 54 auras, chacune d'un type (Plante, Feu, Cosmos…) ; l'aura équipée donne un bonus de chance
 // sur les auras de son type (ex. Sakura : ×2 sur les auras Plante).
 // Chaque nouvelle aura déclenche une cinématique ; l'Index permet d'équiper une aura et de revoir
-// son animation. Double appui sur « Index » : menu caché (commande OBTIEN <nom de l'aura>).
+// son animation.
 //
 // Quitter : glisser vers le haut depuis le bord bas de l'écran, ou Echap.
 // Sur PC : cargo run -- --screenshot out.png   (rendu hors écran)
 //          cargo run -- --icon icon.png         (icône)
 //          LAPP_DATA=/tmp/auras cargo run       (fenêtre)
-// Captures de test : --equip <id> | --page index [--detail N] | --page secret | --cs <id> [--t secondes]
+// Captures de test : --equip <id> | --page index [--detail N] | --cs <id> [--t secondes]
 
 use lapp_sdk::prelude::*;
 use std::f32::consts::{PI, TAU};
@@ -160,7 +160,7 @@ fn fmt_x(m: f32) -> String {
     if m.fract() == 0.0 { format!("×{}", m as u32) } else { format!("×{:.1}", m).replace('.', ",") }
 }
 
-/// Minuscules, sans accents ni apostrophes : sert à reconnaître le nom tapé dans le menu caché.
+/// Minuscules, sans accents ni apostrophes.
 fn norm(s: &str) -> String {
     let mut out = String::new();
     for ch in s.chars().flat_map(|c| c.to_lowercase()) {
@@ -181,6 +181,40 @@ fn norm(s: &str) -> String {
         out.push_str(r);
     }
     out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn dz(v: &[u8]) -> String {
+    let mut s: u32 = 0x5A17_C3E9;
+    let b: Vec<u8> = v
+        .iter()
+        .map(|&x| {
+            s = s.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+            x ^ (s >> 24) as u8
+        })
+        .collect();
+    String::from_utf8(b).unwrap_or_default()
+}
+const Z_TITLE: [u8; 11] = [4, 251, 152, 164, 108, 189, 54, 199, 247, 198, 9];
+const Z_FIELD: [u8; 4] = [10, 241, 146, 180];
+const Z_OK: [u8; 7] = [31, 255, 154, 184, 40, 187, 37];
+const Z_CLOSE: [u8; 10] = [171, 30, 79, 241, 10, 187, 37, 201, 250, 119];
+const Z_BAD: [u8; 13] = [10, 241, 146, 180, 108, 183, 57, 199, 240, 107, 206, 89, 144];
+const Z_MISS: [u8; 17] = [8, 235, 132, 176, 108, 183, 57, 208, 237, 106, 213, 90, 223, 191, 35, 246, 132];
+const Z_GOT: [u8; 12] = [8, 235, 132, 176, 108, 177, 53, 208, 250, 107, 213, 73];
+const ZK: [u64; 3] = [0x2ea2ada917d8411e, 0xaec617f5f4ebf590, 0x41cdc6a5f6ced737];
+
+fn kh(s: &str) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    let pre: Vec<u8> = "Δ".bytes().chain(s.bytes()).collect();
+    for r in 0..200_000u64 {
+        for b in pre.iter().copied().chain(r.to_le_bytes()) {
+            h ^= b as u64;
+            h = h.wrapping_mul(0x0100_0000_01b3);
+        }
+        h ^= h >> 29;
+        h = h.wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    }
+    h
 }
 
 // ---------------------------------------------------------------- hasard
@@ -716,7 +750,7 @@ fn figure(g: &mut Gfx, x: f32, y: f32, r: f32, aura: Option<usize>) {
 enum Page {
     Main,
     Index,
-    Secret,
+    Aux,
 }
 
 struct Rolling {
@@ -732,7 +766,7 @@ struct Cutscene {
     el: f32,
     revealed: bool,
     reveal_el: f32,
-    label: &'static str,
+    label: String,
 }
 
 struct Auras {
@@ -755,8 +789,8 @@ struct Auras {
     scroll: Scroller,
     index_tap: Option<f32>,
     title_tap: f32,
-    cmd: String,
-    cmd_msg: Option<(String, bool)>,
+    buf: String,
+    buf_msg: Option<(String, bool)>,
 }
 
 impl Auras {
@@ -787,8 +821,8 @@ impl Auras {
             scroll: Scroller::new(),
             index_tap: None,
             title_tap: -1.0,
-            cmd: String::new(),
-            cmd_msg: None,
+            buf: String::new(),
+            buf_msg: None,
         }
     }
 
@@ -869,8 +903,8 @@ impl Auras {
         }
     }
 
-    fn open_cs(&mut self, aura: usize, label: &'static str) {
-        self.cs = Some(Cutscene { aura, el: 0.0, revealed: false, reveal_el: 0.0, label });
+    fn open_cs(&mut self, aura: usize, label: &str) {
+        self.cs = Some(Cutscene { aura, el: 0.0, revealed: false, reveal_el: 0.0, label: label.to_string() });
     }
 
     fn close_cs(&mut self) {
@@ -880,27 +914,30 @@ impl Auras {
         }
     }
 
-    fn open_secret(&mut self, ctx: &Ctx) {
+    fn open_aux(&mut self, ctx: &Ctx) {
         self.back_to = if self.page == Page::Index { Page::Index } else { Page::Main };
-        self.page = Page::Secret;
+        self.page = Page::Aux;
         self.detail = None;
-        self.cmd.clear();
-        self.cmd_msg = None;
+        self.buf.clear();
+        self.buf_msg = None;
         ctx.keyboard(1);
     }
 
-    fn close_secret(&mut self, ctx: &Ctx) {
+    fn close_aux(&mut self, ctx: &Ctx) {
         self.page = self.back_to;
         ctx.keyboard(0);
     }
 
-    fn run_command(&mut self, ctx: &Ctx) {
-        let n = norm(&self.cmd);
-        let want = ["obtient ", "obtiens ", "obtien "].iter().find_map(|p| n.strip_prefix(p)).map(|w| w.trim().to_string());
-        let Some(want) = want.filter(|w| !w.is_empty()) else {
-            self.cmd_msg = Some(("Commande inconnue. Essaie OBTIEN suivi du nom d'une aura.".into(), false));
-            return;
+    fn submit_aux(&mut self, ctx: &Ctx) {
+        let n = norm(&self.buf);
+        let (head, want) = match n.split_once(' ') {
+            Some((h, w)) => (h.to_string(), w.trim().to_string()),
+            None => (n.clone(), String::new()),
         };
+        if want.is_empty() || !ZK.contains(&kh(&head)) {
+            self.buf_msg = Some((dz(&Z_BAD), false));
+            return;
+        }
         let found = AURAS
             .iter()
             .position(|a| norm(a.name) == want || a.id == want.replace(' ', ""))
@@ -911,9 +948,9 @@ impl Auras {
                 self.result = Some((i, 0.0));
                 ctx.keyboard(0);
                 self.page = Page::Main;
-                self.open_cs(i, "Obtenue avec OBTIEN");
+                self.open_cs(i, &dz(&Z_GOT));
             }
-            None => self.cmd_msg = Some((format!("Aucune aura ne s'appelle « {} ».", want), false)),
+            None => self.buf_msg = Some((dz(&Z_MISS), false)),
         }
     }
 
@@ -955,7 +992,7 @@ impl Auras {
         (sheet, prev, equip, replay)
     }
 
-    fn secret_layout(ctx: &Ctx) -> (Rect, Rect) {
+    fn aux_layout(ctx: &Ctx) -> (Rect, Rect) {
         let (w, s) = (ctx.width(), ctx.scale());
         let m = 14.0 * s;
         let field = Rect::new(m, 110.0 * s, w - 2.0 * m, 44.0 * s);
@@ -1113,24 +1150,23 @@ impl Auras {
         }
     }
 
-    fn draw_secret(&mut self, ctx: &Ctx, g: &mut Gfx) {
+    fn draw_aux(&mut self, ctx: &Ctx, g: &mut Gfx) {
         let (w, s) = (ctx.width(), ctx.scale());
         g.clear(rgb(STAGE));
         for i in 0..40 {
             let fi = i as f32;
             g.circle(hsh(fi, 1.0) * w, hsh(fi, 2.0) * ctx.height(), 0.8 * s, c(0xFFFFFF, 0.1 + 0.2 * (self.t * 0.7 + fi).sin().abs()));
         }
-        ctx.text_mid(g, "‹ Fermer", 12.0 * s, 25.0 * s, &Text::new(13.0 * s).bold().color(rgb(GOLD)));
-        ctx.text(g, "Menu caché", 14.0 * s, 52.0 * s, &Text::new(20.0 * s).bold().color(rgb(INK)));
-        ctx.text(g, "Tape une commande, ex. OBTIEN SAKURA", 14.0 * s, 82.0 * s, &Text::new(11.0 * s).bold().color(rgb(MUTED)).max_width(w - 28.0 * s));
-        let (field, go) = Self::secret_layout(ctx);
+        ctx.text_mid(g, &dz(&Z_CLOSE), 12.0 * s, 25.0 * s, &Text::new(13.0 * s).bold().color(rgb(GOLD)));
+        ctx.text(g, &dz(&Z_TITLE), 14.0 * s, 56.0 * s, &Text::new(20.0 * s).bold().color(rgb(INK)));
+        let (field, go) = Self::aux_layout(ctx);
         g.rrect(field.x, field.y, field.w, field.h, 14.0 * s, rgb(LINE));
         g.rrect(field.x + 1.0, field.y + 1.0, field.w - 2.0, field.h - 2.0, 13.0 * s, rgb(PANEL));
         let st = Text::new(15.0 * s).bold().color(rgb(INK)).max_width(field.w - 30.0 * s).ellipsis_left();
-        let shown = self.cmd.to_uppercase();
+        let shown = self.buf.to_uppercase();
         let tw = if shown.is_empty() { 0.0 } else { ctx.measure(&shown, &st).min(field.w - 30.0 * s) };
         if shown.is_empty() {
-            ctx.text_mid(g, "Commande", field.x + 12.0 * s, field.y + field.h / 2.0, &Text::new(15.0 * s).bold().color(rgb(MUTED)));
+            ctx.text_mid(g, &dz(&Z_FIELD), field.x + 12.0 * s, field.y + field.h / 2.0, &Text::new(15.0 * s).bold().color(rgb(MUTED)));
         } else {
             ctx.text_mid(g, &shown, field.x + 12.0 * s, field.y + field.h / 2.0, &st);
         }
@@ -1139,8 +1175,8 @@ impl Auras {
         }
         g.rrect(go.x, go.y, go.w, go.h, 14.0 * s, rgb(GOLD));
         let (gx, gy) = go.center();
-        ctx.text_mid(g, "Valider", gx, gy, &Text::new(14.0 * s).bold().color(rgb(GOLD_INK)).center());
-        if let Some((m, ok)) = &self.cmd_msg {
+        ctx.text_mid(g, &dz(&Z_OK), gx, gy, &Text::new(14.0 * s).bold().color(rgb(GOLD_INK)).center());
+        if let Some((m, ok)) = &self.buf_msg {
             ctx.text(g, m, 14.0 * s, go.bottom() + 12.0 * s, &Text::new(11.0 * s).bold().color(rgb(if *ok { 0x7BE08A } else { 0xFF7A8A })).max_width(w - 28.0 * s));
         }
     }
@@ -1204,7 +1240,7 @@ impl Auras {
             fx(g, cs.aura, el, cx, cy, r * zoom, 1.6);
             let ty = h * 0.7;
             let qa = |v: f32| (v.clamp(0.0, 1.0) * 10.0).round() / 10.0;
-            ctx.text_mid(g, cs.label, cx, ty - 36.0 * s, &Text::new(13.0 * s).bold().color(c(0xFFFFFF, qa((e2 - 0.1) / 0.4))).center());
+            ctx.text_mid(g, &cs.label, cx, ty - 36.0 * s, &Text::new(13.0 * s).bold().color(c(0xFFFFFF, qa((e2 - 0.1) / 0.4))).center());
             let nchars = a.name.chars().count();
             let shown = (((e2 - 0.05) / 0.06).max(0.0) as usize).min(nchars);
             let part: String = a.name.chars().take(shown).collect();
@@ -1240,7 +1276,7 @@ impl App for Auras {
         } else {
             match self.page {
                 Page::Index => self.draw_index(ctx, g),
-                Page::Secret => self.draw_secret(ctx, g),
+                Page::Aux => self.draw_aux(ctx, g),
                 Page::Main => self.draw_main(ctx, g),
             }
         }
@@ -1256,7 +1292,6 @@ impl App for Auras {
         if let Some((_, age)) = &mut self.result {
             *age += dt;
         }
-        // appui simple sur « Index » : on attend un éventuel 2e appui avant d'ouvrir l'Index
         if let Some(wt) = &mut self.index_tap {
             *wt -= dt;
             if *wt <= 0.0 {
@@ -1343,7 +1378,7 @@ impl App for Auras {
                         } else if index.contains(x, y) {
                             if self.index_tap.is_some() {
                                 self.index_tap = None;
-                                self.open_secret(ctx);
+                                self.open_aux(ctx);
                             } else {
                                 self.index_tap = Some(0.35);
                             }
@@ -1353,27 +1388,27 @@ impl App for Auras {
                     _ => {}
                 }
             }
-            Page::Secret => {
-                let (field, go) = Self::secret_layout(ctx);
+            Page::Aux => {
+                let (field, go) = Self::aux_layout(ctx);
                 match ev {
                     Event::Key(Key::Char(ch)) => {
-                        if self.cmd.chars().count() < 40 {
-                            self.cmd.push(ch);
+                        if self.buf.chars().count() < 40 {
+                            self.buf.push(ch);
                         }
-                        self.cmd_msg = None;
+                        self.buf_msg = None;
                     }
-                    Event::Key(Key::Space) => self.cmd.push(' '),
+                    Event::Key(Key::Space) => self.buf.push(' '),
                     Event::Key(Key::Back) => {
-                        self.cmd.pop();
+                        self.buf.pop();
                     }
-                    Event::Key(Key::Enter) => self.run_command(ctx),
+                    Event::Key(Key::Enter) => self.submit_aux(ctx),
                     Event::Tap { x, y } => {
                         if go.contains(x, y) {
-                            self.run_command(ctx);
+                            self.submit_aux(ctx);
                         } else if field.contains(x, y) {
                             ctx.keyboard(1);
                         } else if y < 44.0 * ctx.scale() && x < ctx.width() * 0.4 {
-                            self.close_secret(ctx);
+                            self.close_aux(ctx);
                         }
                     }
                     _ => {}
@@ -1406,10 +1441,9 @@ impl App for Auras {
                             if x < ctx.width() * 0.3 {
                                 self.page = Page::Main;
                             } else if x > ctx.width() * 0.3 && x < ctx.width() * 0.7 {
-                                // double appui sur le titre « Index » : menu caché
                                 if self.t - self.title_tap < 0.35 {
                                     self.title_tap = -1.0;
-                                    self.open_secret(ctx);
+                                    self.open_aux(ctx);
                                 } else {
                                     self.title_tap = self.t;
                                 }
@@ -1435,8 +1469,8 @@ impl App for Auras {
             self.close_cs();
             return true;
         }
-        if self.page == Page::Secret {
-            self.close_secret(ctx);
+        if self.page == Page::Aux {
+            self.close_aux(ctx);
             return true;
         }
         if self.detail.is_some() {
@@ -1469,15 +1503,11 @@ fn main() {
                 app.detail = Some(d.min(AURAS.len() - 1));
             }
         }
-        Some("secret") => {
-            app.page = Page::Secret;
-            app.cmd = lapp_sdk::arg_value("--cmd").unwrap_or_default();
-        }
         _ => {}
     }
     if let Some(i) = lapp_sdk::arg_value("--cs").and_then(|v| find(&v)) {
         let t = lapp_sdk::arg_value("--t").and_then(|v| v.parse::<f32>().ok()).unwrap_or(5.0);
-        app.cs = Some(Cutscene { aura: i, el: t, revealed: true, reveal_el: 0.0, label: "Nouvelle aura !" });
+        app.cs = Some(Cutscene { aura: i, el: t, revealed: true, reveal_el: 0.0, label: "Nouvelle aura !".into() });
     }
     if let Some(e) = lapp_sdk::arg_value("--equip").and_then(|v| find(&v)) {
         app.equipped = Some(e);
