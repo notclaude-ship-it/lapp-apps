@@ -15,8 +15,8 @@ Décompressez ce dossier à côté du SDK, pour obtenir `~/lapp/auras` et `~/lap
 
     cd ~/lapp/auras
     cargo run -- --screenshot out.png     # aperçu hors écran
-    ~/lapp/sdk/tools/lapp-build           # produit com.alexi.auras-1.3.0.lapp
-    sudo ~/lapp/target/release/lapp install com.alexi.auras-1.3.0.lapp
+    ~/lapp/sdk/tools/lapp-build           # produit com.alexi.auras-1.4.0.lapp
+    sudo ~/lapp/target/release/lapp install com.alexi.auras-1.4.0.lapp
 
 Captures de test : `--equip galaxie`, `--page index [--detail 17]`,
 `--cs infini --t 6`.

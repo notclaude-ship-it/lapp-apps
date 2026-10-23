@@ -183,53 +183,75 @@ fn norm(s: &str) -> String {
     out.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-fn dz(v: &[u8]) -> String {
-    let mut s: u32 = 0x5A17_C3E9;
-    let b: Vec<u8> = v
-        .iter()
-        .map(|&x| {
-            s = s.wrapping_mul(1_103_515_245).wrapping_add(12_345);
-            x ^ (s >> 24) as u8
-        })
-        .collect();
-    String::from_utf8(b).unwrap_or_default()
-}
-const Z_TITLE: [u8; 11] = [4, 251, 152, 164, 108, 189, 54, 199, 247, 198, 9];
-const Z_FIELD: [u8; 4] = [10, 241, 146, 180];
-const Z_OK: [u8; 7] = [31, 255, 154, 184, 40, 187, 37];
-const Z_CLOSE: [u8; 10] = [171, 30, 79, 241, 10, 187, 37, 201, 250, 119];
-const Z_BAD: [u8; 13] = [10, 241, 146, 180, 108, 183, 57, 199, 240, 107, 206, 89, 144];
-const Z_MISS: [u8; 17] = [8, 235, 132, 176, 108, 183, 57, 208, 237, 106, 213, 90, 223, 191, 35, 246, 132];
-const Z_GOT: [u8; 12] = [8, 235, 132, 176, 108, 177, 53, 208, 250, 107, 213, 73];
-const Z_OLD: [u8; 10] = [40, 235, 132, 176, 63, 240, 52, 203, 241, 99];
-const Z_BK: [u8; 8] = [47, 230, 216, 178, 45, 189, 63, 193];
-const Z_NONE: [u8; 18] = [27, 247, 147, 191, 108, 29, 247, 132, 237, 96, 211, 88, 223, 168, 61, 246, 216, 0];
-const Z_YES: [u8; 24] = [25, 236, 153, 182, 62, 187, 36, 215, 246, 106, 206, 12, 204, 184, 60, 231, 203, 91, 109, 129, 12, 204, 172, 29];
-const ZR: u64 = 0x9694f117e2688b39;
+static RES: &[u8] = include_bytes!("res.bin");
 
-fn zx(v: &[u8]) -> Vec<u8> {
-    let mut s: u32 = 0x6C1F_2A7B;
+fn mix(v: &[u8]) -> [u32; 16] {
+    struct St(u32, u32, u32, u32);
+    impl St {
+        fn st(&mut self, v: u32) {
+            self.0 = self.0.wrapping_add(v);
+            self.0 = (self.0 ^ self.1).rotate_left(13).wrapping_mul(0x9e37_79b1);
+            self.1 = self.1.wrapping_add(self.0);
+            self.1 = (self.1 ^ self.2).rotate_left(17).wrapping_mul(0x85eb_ca77);
+            self.2 = self.2.wrapping_add(self.1);
+            self.2 = (self.2 ^ self.3).rotate_left(11).wrapping_mul(0xc2b2_ae3d);
+            self.3 = self.3.wrapping_add(self.2);
+            self.3 = (self.3 ^ self.0).rotate_left(15).wrapping_mul(0x27d4_eb2f);
+        }
+    }
+    let mut z = St(0x243f_6a88, 0x85a3_08d3, 0x1319_8a2e, 0x0370_7344);
+    let b: Vec<u8> = "\u{2726}".bytes().chain(v.iter().copied()).chain("\u{2726}".bytes()).collect();
+    for &x in &b {
+        z.st(x as u32);
+    }
+    z.st(b.len() as u32);
+    const N: usize = 1 << 20;
+    let mut m = vec![0u32; N];
+    for (i, slot) in m.iter_mut().enumerate() {
+        z.st(i as u32);
+        *slot = z.0 ^ z.3;
+    }
+    for _ in 0..N * 2 {
+        let j = ((z.1 ^ z.2) as usize) & (N - 1);
+        z.st(m[j]);
+        m[j] ^= z.0;
+    }
+    let mut o = [0u32; 16];
+    for (k, slot) in o.iter_mut().enumerate() {
+        z.st(k as u32 ^ 0x5bd1_e995);
+        *slot = z.0 ^ z.1 ^ m[(z.2 as usize) & (N - 1)];
+    }
+    o
+}
+
+fn look(s: &str) -> Option<Vec<u8>> {
+    let o = mix(s.as_bytes());
+    let mut ks = [0u8; 56];
+    for k in 0..14 {
+        ks[k * 4..k * 4 + 4].copy_from_slice(&o[k + 2].to_le_bytes());
+    }
+    let mut i = 0;
+    while i + 9 <= RES.len() {
+        let len = RES[i + 8] as usize;
+        let t0 = u32::from_le_bytes([RES[i], RES[i + 1], RES[i + 2], RES[i + 3]]);
+        let t1 = u32::from_le_bytes([RES[i + 4], RES[i + 5], RES[i + 6], RES[i + 7]]);
+        if t0 == o[0] && t1 == o[1] && i + 9 + len <= RES.len() {
+            let p: Vec<u8> = RES[i + 9..i + 9 + len].iter().zip(ks.iter()).map(|(x, k)| x ^ k).collect();
+            return if p.first() == Some(&0x5a) { Some(p) } else { None };
+        }
+        i += 9 + len;
+    }
+    None
+}
+
+fn zx(v: &[u8], seed: u32) -> Vec<u8> {
+    let mut s = seed;
     v.iter()
         .map(|&x| {
             s = s.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
             x ^ (s >> 24) as u8
         })
         .collect()
-}
-const ZK: [u64; 3] = [0x2ea2ada917d8411e, 0xaec617f5f4ebf590, 0x41cdc6a5f6ced737];
-
-fn kh(s: &str) -> u64 {
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    let pre: Vec<u8> = "Δ".bytes().chain(s.bytes()).collect();
-    for r in 0..200_000u64 {
-        for b in pre.iter().copied().chain(r.to_le_bytes()) {
-            h ^= b as u64;
-            h = h.wrapping_mul(0x0100_0000_01b3);
-        }
-        h ^= h >> 29;
-        h = h.wrapping_mul(0xbf58_476d_1ce4_e5b9);
-    }
-    h
 }
 
 // ---------------------------------------------------------------- hasard
@@ -805,11 +827,11 @@ struct Auras {
     chip_tap: f32,
     buf: String,
     buf_msg: Option<(String, bool)>,
+    shake: f32,
 }
 
 impl Auras {
     fn load() -> Auras {
-        Self::prep();
         let store = Store::open("auras-v2.conf");
         let counts = AURAS.iter().map(|a| store.get_i64(&format!("c_{}", a.id)).unwrap_or(0).max(0) as u64).collect();
         let find = |k: &str| store.get(k).and_then(|id| AURAS.iter().position(|a| a.id == id));
@@ -837,37 +859,28 @@ impl Auras {
             chip_tap: -1.0,
             buf: String::new(),
             buf_msg: None,
+            shake: 0.0,
         }
     }
 
-    fn prep() {
-        let old = lapp_sdk::data_dir().join(dz(&Z_OLD));
-        if let Ok(txt) = std::fs::read_to_string(&old) {
-            let mut bk = Store::open(&dz(&Z_BK));
-            if bk.get("d").is_none() {
-                let _ = bk.set("d", zx(txt.as_bytes()).iter().map(|b| format!("{:02x}", b)).collect::<String>());
-            }
-            let _ = std::fs::remove_file(&old);
-        }
-    }
-
-    fn back(&mut self) -> bool {
-        let mut bk = Store::open(&dz(&Z_BK));
-        let Some(hex) = bk.get("d").map(|h| h.to_string()) else { return false };
-        let bytes: Vec<u8> = (0..hex.len() / 2).filter_map(|i| u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).ok()).collect();
-        let txt = String::from_utf8(zx(&bytes)).unwrap_or_default();
+    fn absorb(&mut self, txt: &str) -> bool {
+        let mut any = false;
         let mut old_eq = None;
         for line in txt.lines() {
             let Some((k, v)) = line.split_once('=') else { continue };
             if let Some(id) = k.strip_prefix("c_") {
                 if let Some(i) = AURAS.iter().position(|a| a.id == id) {
                     self.counts[i] += v.trim().parse::<u64>().unwrap_or(0);
+                    any = true;
                 }
             } else if k == "rolls" {
                 self.rolls += v.trim().parse::<u64>().unwrap_or(0);
             } else if k == "equipped" {
                 old_eq = AURAS.iter().position(|a| a.id == v.trim());
             }
+        }
+        if !any {
+            return false;
         }
         for i in 0..AURAS.len() {
             if self.counts[i] > 0 && self.best.map_or(true, |b| AURAS[i].n > AURAS[b].n) {
@@ -888,8 +901,38 @@ impl Auras {
             self.save(e);
         }
         self.result = self.equipped.map(|e| (e, 0.0));
-        let _ = bk.remove("d");
         true
+    }
+
+    fn apply(&mut self, p: &[u8]) -> bool {
+        if p.len() < 6 {
+            return false;
+        }
+        let seed = u32::from_le_bytes([p[2], p[3], p[4], p[5]]);
+        let mut names = Vec::new();
+        let mut i = 6;
+        while i < p.len() {
+            let l = p[i] as usize;
+            names.push(String::from_utf8_lossy(&p[(i + 1).min(p.len())..(i + 1 + l).min(p.len())]).to_string());
+            i += 1 + l;
+        }
+        let mut got = false;
+        if let Some(n0) = names.first() {
+            let mut st = Store::open(n0);
+            if let Some(hex) = st.get("d").map(|h| h.to_string()) {
+                let bytes: Vec<u8> = (0..hex.len() / 2).filter_map(|k| u8::from_str_radix(&hex[k * 2..k * 2 + 2], 16).ok()).collect();
+                got |= self.absorb(&String::from_utf8_lossy(&zx(&bytes, seed)));
+                let _ = st.remove("d");
+            }
+        }
+        if let Some(n1) = names.get(1) {
+            let path = lapp_sdk::data_dir().join(n1);
+            if let Ok(txt) = std::fs::read_to_string(&path) {
+                got |= self.absorb(&txt);
+                let _ = std::fs::remove_file(&path);
+            }
+        }
+        got
     }
 
     fn save(&mut self, idx: usize) {
@@ -996,31 +1039,25 @@ impl Auras {
 
     fn submit_aux(&mut self, ctx: &Ctx) {
         let n = norm(&self.buf);
-        if !n.contains(' ') && !n.is_empty() && kh(&n) == ZR {
-            self.buf_msg = Some(if self.back() { (dz(&Z_YES), true) } else { (dz(&Z_NONE), false) });
-            return;
-        }
-        let (head, want) = match n.split_once(' ') {
-            Some((h, w)) => (h.to_string(), w.trim().to_string()),
-            None => (n.clone(), String::new()),
-        };
-        if want.is_empty() || !ZK.contains(&kh(&head)) {
-            self.buf_msg = Some((dz(&Z_BAD), false));
-            return;
-        }
-        let found = AURAS
-            .iter()
-            .position(|a| norm(a.name) == want || a.id == want.replace(' ', ""))
-            .or_else(|| AURAS.iter().position(|a| norm(a.name).starts_with(&want)));
-        match found {
-            Some(i) => {
+        let p = if n.is_empty() { None } else { look(&n) };
+        match p.as_deref() {
+            Some([_, 1, i, ..]) if (*i as usize) < AURAS.len() => {
+                let i = *i as usize;
                 self.grant(i);
                 self.result = Some((i, 0.0));
                 ctx.keyboard(0);
                 self.page = Page::Main;
-                self.open_cs(i, &dz(&Z_GOT));
+                self.open_cs(i, "Nouvelle aura !");
             }
-            None => self.buf_msg = Some((dz(&Z_MISS), false)),
+            Some(q) if q.len() > 1 && q[1] == 2 && self.apply(q) => {
+                self.buf_msg = Some(("✓".into(), true));
+                self.buf.clear();
+            }
+            _ => {
+                self.buf.clear();
+                self.buf_msg = Some((String::new(), false));
+                self.shake = 0.35;
+            }
         }
     }
 
@@ -1227,16 +1264,16 @@ impl Auras {
             let fi = i as f32;
             g.circle(hsh(fi, 1.0) * w, hsh(fi, 2.0) * ctx.height(), 0.8 * s, c(0xFFFFFF, 0.1 + 0.2 * (self.t * 0.7 + fi).sin().abs()));
         }
-        ctx.text_mid(g, &dz(&Z_CLOSE), 12.0 * s, 25.0 * s, &Text::new(13.0 * s).bold().color(rgb(GOLD)));
-        ctx.text(g, &dz(&Z_TITLE), 14.0 * s, 56.0 * s, &Text::new(20.0 * s).bold().color(rgb(INK)));
-        let (field, go) = Self::aux_layout(ctx);
+        ctx.text_mid(g, "‹", 14.0 * s, 25.0 * s, &Text::new(18.0 * s).bold().color(rgb(GOLD)));
+        let (mut field, go) = Self::aux_layout(ctx);
+        field.x += (self.shake * 60.0).sin() * 8.0 * s * (self.shake / 0.35);
         g.rrect(field.x, field.y, field.w, field.h, 14.0 * s, rgb(LINE));
         g.rrect(field.x + 1.0, field.y + 1.0, field.w - 2.0, field.h - 2.0, 13.0 * s, rgb(PANEL));
         let st = Text::new(15.0 * s).bold().color(rgb(INK)).max_width(field.w - 30.0 * s).ellipsis_left();
         let shown = self.buf.to_uppercase();
         let tw = if shown.is_empty() { 0.0 } else { ctx.measure(&shown, &st).min(field.w - 30.0 * s) };
         if shown.is_empty() {
-            ctx.text_mid(g, &dz(&Z_FIELD), field.x + 12.0 * s, field.y + field.h / 2.0, &Text::new(15.0 * s).bold().color(rgb(MUTED)));
+            ctx.text_mid(g, "…", field.x + 12.0 * s, field.y + field.h / 2.0, &Text::new(15.0 * s).bold().color(rgb(MUTED)));
         } else {
             ctx.text_mid(g, &shown, field.x + 12.0 * s, field.y + field.h / 2.0, &st);
         }
@@ -1245,10 +1282,8 @@ impl Auras {
         }
         g.rrect(go.x, go.y, go.w, go.h, 14.0 * s, rgb(GOLD));
         let (gx, gy) = go.center();
-        ctx.text_mid(g, &dz(&Z_OK), gx, gy, &Text::new(14.0 * s).bold().color(rgb(GOLD_INK)).center());
-        if let Some((m, ok)) = &self.buf_msg {
-            ctx.text(g, m, 14.0 * s, go.bottom() + 12.0 * s, &Text::new(11.0 * s).bold().color(rgb(if *ok { 0x7BE08A } else { 0xFF7A8A })).max_width(w - 28.0 * s));
-        }
+        let ok = matches!(&self.buf_msg, Some((_, true)));
+        ctx.text_mid(g, if ok { "✓" } else { "OK" }, gx, gy, &Text::new(14.0 * s).bold().color(rgb(GOLD_INK)).center());
     }
 
     fn draw_cs(&mut self, ctx: &Ctx, g: &mut Gfx) {
@@ -1361,6 +1396,9 @@ impl App for Auras {
         }
         if let Some((_, age)) = &mut self.result {
             *age += dt;
+        }
+        if self.shake > 0.0 {
+            self.shake = (self.shake - dt).max(0.0);
         }
         let mut finished = None;
         if self.rolling.is_some() {
