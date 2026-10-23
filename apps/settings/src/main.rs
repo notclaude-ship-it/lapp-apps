@@ -3,10 +3,13 @@
 // - Luminosité : /sys/class/backlight/* ; Volume : PipeWire (wpctl), repli ALSA (amixer) ; Informations : appareil, noyau, mémoire, stockage, batterie, IP
 // - Wi-Fi : activer/désactiver, lister les réseaux, se connecter (mot de passe au clavier virtuel de lapp-home), déconnecter, oublier
 //   (NetworkManager : nmcli est lancé sur l'hôte via le courtier de commandes, voir wifi.rs)
+// - Bluetooth : activer/désactiver, rechercher, jumeler, connecter, déconnecter, oublier
+//   (BlueZ : bluetoothctl est lancé sur l'hôte via le courtier de commandes, voir bluetooth.rs)
 // - quitter : glisser vers le haut depuis le bord bas de l'écran, ou Echap
-// Permissions : display, system (/sys en écriture + /dev/snd), network (adresse IP), storage, commands (nmcli).
-// Tests hors écran : settings --screenshot out.png [--page info|wifi|wifinet|wifipass] [--demo] ; settings --icon icon.png
+// Permissions : display, system (/sys en écriture + /dev/snd), network (adresse IP), storage, commands (nmcli, bluetoothctl, rfkill).
+// Tests hors écran : settings --screenshot out.png [--page info|wifi|wifinet|wifipass|bt|btdev] [--demo] ; settings --icon icon.png
 
+mod bluetooth;
 mod gfx;
 mod hostcmd;
 mod kbd;
@@ -529,6 +532,8 @@ enum Page {
     Info,
     Wifi,
     WifiNet,
+    Bt,
+    BtDev,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -555,9 +560,9 @@ const SL_X0: f32 = 24.0;
 const SL_X1: f32 = 248.0;
 
 /// (y, hauteur) des trois cartes de la page principale, en pixels de conception (272 de large).
-fn cards() -> [(f32, f32); 4] {
+fn cards() -> [(f32, f32); 5] {
     let y0 = HEADER + 14.0;
-    [(y0, 68.0), (y0 + 78.0, 68.0), (y0 + 156.0, 48.0), (y0 + 214.0, 48.0)]
+    [(y0, 68.0), (y0 + 78.0, 68.0), (y0 + 156.0, 48.0), (y0 + 214.0, 48.0), (y0 + 272.0, 48.0)]
 }
 
 /// Identifiant X11 de la fenêtre de premier niveau (pour le clavier virtuel de lapp-home).
@@ -600,6 +605,11 @@ struct App {
     busy: Option<String>,
     inbox: Arc<Mutex<Vec<wifi::Done>>>,
     kbd: Option<kbd::KbdClient>,
+    // Bluetooth
+    bt: Option<bluetooth::State>,
+    bt_err: Option<String>,
+    bt_sel: Option<bluetooth::Dev>,
+    bt_inbox: Arc<Mutex<Vec<bluetooth::Done>>>,
 }
 
 impl App {
@@ -635,6 +645,10 @@ impl App {
             busy: None,
             inbox: Arc::new(Mutex::new(Vec::new())),
             kbd: None,
+            bt: None,
+            bt_err: None,
+            bt_sel: None,
+            bt_inbox: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -778,15 +792,20 @@ impl App {
 
     fn back(&mut self) {
         match self.page {
-            Page::Info | Page::Wifi => self.page = Page::Main,
+            Page::Info | Page::Wifi | Page::Bt => self.page = Page::Main,
             Page::WifiNet => self.leave_net(),
+            Page::BtDev => self.leave_dev(),
             Page::Main => {}
         }
         self.redraw_later();
     }
 
     fn max_scroll(&self) -> f32 {
-        let n = self.wifi.as_ref().map(|w| w.nets.len()).unwrap_or(0) as f32;
+        let n = if matches!(self.page, Page::Bt | Page::BtDev) {
+            self.bt.as_ref().map(|b| b.devs.len()).unwrap_or(0)
+        } else {
+            self.wifi.as_ref().map(|w| w.nets.len()).unwrap_or(0)
+        } as f32;
         let view = self.size.1 as f32 / self.scale() - LIST_Y - PAD_BOTTOM;
         (n * NET_ROW - view).max(0.0)
     }
@@ -815,6 +834,157 @@ impl App {
         v
     }
 
+    // -------------------------------------------------------------- Bluetooth
+
+    /// Lance une action Bluetooth dans un thread (bluetoothctl peut mettre plusieurs secondes).
+    fn bt_job(&mut self, label: &str, act: bluetooth::Action) {
+        self.busy = Some(label.to_string());
+        self.jobs += 1;
+        let inbox = self.bt_inbox.clone();
+        std::thread::spawn(move || {
+            let d = bluetooth::run(act);
+            if let Ok(mut q) = inbox.lock() {
+                q.push(d);
+            }
+        });
+        self.redraw_later();
+    }
+
+    /// Récupère les résultats Bluetooth terminés ; `true` s'il y en avait.
+    fn drain_bt(&mut self) -> bool {
+        let done: Vec<bluetooth::Done> = match self.bt_inbox.lock() {
+            Ok(mut q) => q.drain(..).collect(),
+            Err(_) => return false,
+        };
+        if done.is_empty() {
+            return false;
+        }
+        for d in done {
+            self.jobs = self.jobs.saturating_sub(1);
+            match d.state {
+                Ok(st) => {
+                    self.bt_err = None;
+                    if let Some(sel) = self.bt_sel.clone() {
+                        let fresh = st.devs.iter().find(|n| n.mac == sel.mac).cloned();
+                        self.bt_sel = fresh.or(Some(sel));
+                    }
+                    let max = ((st.devs.len() as f32 * NET_ROW) - (self.size.1 as f32 / self.scale() - LIST_Y - PAD_BOTTOM)).max(0.0);
+                    self.scroll = self.scroll.min(max);
+                    self.bt = Some(st);
+                }
+                Err(e) => self.bt_err = Some(e),
+            }
+            match d.note {
+                Some(Ok(m)) if !m.is_empty() => self.set_toast(m),
+                Some(Err(e)) => self.set_toast(e),
+                _ => {}
+            }
+            if d.back && self.page == Page::BtDev {
+                self.leave_dev();
+            }
+        }
+        if self.jobs == 0 {
+            self.busy = None;
+        }
+        true
+    }
+
+    fn open_bt(&mut self) {
+        self.page = Page::Bt;
+        self.scroll = 0.0;
+        // la liste connue s'affiche tout de suite, la recherche (quelques secondes) la complète ensuite
+        self.bt_job("Lecture de l'état…", bluetooth::Action::None);
+        if self.bt.as_ref().map(|b| b.powered).unwrap_or(false) {
+            self.bt_job("Recherche des appareils…", bluetooth::Action::Scan);
+        }
+    }
+
+    fn leave_dev(&mut self) {
+        self.page = Page::Bt;
+        self.bt_sel = None;
+    }
+
+    fn bt_label(&self) -> String {
+        match (&self.bt, &self.bt_err) {
+            (Some(b), _) if !b.present => "Indisponible".into(),
+            (Some(b), _) if !b.powered => "Désactivé".into(),
+            (Some(b), _) => {
+                let n = b.devs.iter().filter(|d| d.connected).count();
+                match n {
+                    0 => "Activé".into(),
+                    1 => b.devs.iter().find(|d| d.connected).map(|d| d.name.clone()).unwrap_or_default(),
+                    n => format!("{n} appareils"),
+                }
+            }
+            (None, Some(_)) => "Indisponible".into(),
+            (None, None) => "…".into(),
+        }
+    }
+
+    /// Boutons de la page d'un appareil : (bouton, y, libellé).
+    fn dev_buttons(&self, d: &bluetooth::Dev) -> Vec<(Btn, f32, &'static str)> {
+        let mut y = NET_NEXT_Y;
+        let mut v = vec![];
+        if d.connected {
+            v.push((Btn::Disconnect, y, "Déconnecter"));
+        } else if d.paired {
+            v.push((Btn::Connect, y, "Se connecter"));
+        } else {
+            v.push((Btn::Connect, y, "Jumeler et connecter"));
+        }
+        y += BTN_H + 10.0;
+        if d.paired {
+            v.push((Btn::Forget, y, "Oublier cet appareil"));
+        }
+        v
+    }
+
+    fn tap_bt(&mut self, y: f32) {
+        let s = self.scale();
+        let Some(st) = self.bt.clone() else { return };
+        let (ty, th) = (HEADER + 10.0, 48.0);
+        if y >= ty * s && y < (ty + th) * s {
+            if self.jobs == 0 && st.present {
+                let on = !st.powered;
+                self.bt_job(if on { "Activation…" } else { "Désactivation…" }, bluetooth::Action::Toggle(on));
+            }
+            return;
+        }
+        if !st.powered || y < LIST_Y * s {
+            return;
+        }
+        let idx = (y / s - LIST_Y + self.scroll) / NET_ROW;
+        if idx < 0.0 {
+            return;
+        }
+        if let Some(d) = st.devs.get(idx as usize) {
+            self.bt_sel = Some(d.clone());
+            self.page = Page::BtDev;
+        }
+    }
+
+    fn tap_dev(&mut self, x: f32, y: f32) {
+        let s = self.scale();
+        let w = self.size.0 as f32;
+        let Some(d) = self.bt_sel.clone() else { return };
+        if self.jobs > 0 || x < CARD_X * s || x > w - CARD_X * s {
+            return;
+        }
+        for (b, by, _) in self.dev_buttons(&d) {
+            if y >= by * s && y < (by + BTN_H) * s {
+                match b {
+                    Btn::Connect => {
+                        let l = if d.paired { format!("Connexion à {}…", d.name) } else { format!("Jumelage avec {}…", d.name) };
+                        self.bt_job(&l, bluetooth::Action::Connect(d.clone()));
+                    }
+                    Btn::Disconnect => self.bt_job("Déconnexion…", bluetooth::Action::Disconnect(d.clone())),
+                    Btn::Forget => self.bt_job("Suppression…", bluetooth::Action::Forget(d.clone())),
+                }
+                return;
+            }
+        }
+    }
+
     // -------------------------------------------------------------- interaction
 
     fn tap(&mut self, x: f32, y: f32) {
@@ -825,6 +995,8 @@ impl App {
                 self.back();
             } else if self.page == Page::Wifi && x > w - 96.0 * s && self.jobs == 0 {
                 self.job("Recherche des réseaux…", wifi::Action::None, true);
+            } else if self.page == Page::Bt && x > w - 110.0 * s && self.jobs == 0 && self.bt.as_ref().map(|b| b.powered).unwrap_or(false) {
+                self.bt_job("Recherche des appareils…", bluetooth::Action::Scan);
             }
             return;
         }
@@ -834,6 +1006,8 @@ impl App {
                     if y >= cy * s && y < (cy + ch) * s {
                         if i == 2 {
                             self.open_wifi();
+                        } else if i == 3 {
+                            self.open_bt();
                         } else {
                             self.info = info_rows();
                             self.page = Page::Info;
@@ -843,6 +1017,8 @@ impl App {
             }
             Page::Wifi => self.tap_wifi(y),
             Page::WifiNet => self.tap_net(x, y),
+            Page::Bt => self.tap_bt(y),
+            Page::BtDev => self.tap_dev(x, y),
             Page::Info => {}
         }
     }
@@ -981,7 +1157,7 @@ impl App {
                 p.2 = true;
             }
         }
-        if self.page == Page::Wifi && self.drag.is_none() && self.press.map(|p| p.2).unwrap_or(false) {
+        if matches!(self.page, Page::Wifi | Page::Bt) && self.drag.is_none() && self.press.map(|p| p.2).unwrap_or(false) {
             let max = self.max_scroll();
             self.scroll = (self.scroll - (y - self.last_y) / s).clamp(0.0, max);
         }
@@ -1019,6 +1195,8 @@ impl App {
             Page::Info => self.render_info(g, s),
             Page::Wifi => self.render_wifi(g, s),
             Page::WifiNet => self.render_net(g, s),
+            Page::Bt => self.render_bt(g, s),
+            Page::BtDev => self.render_dev(g, s),
         }
         g.rect(0.0, h - PAD_BOTTOM * s, w, PAD_BOTTOM * s, col(BG, 1.0));
         g.rrect(w * 0.35, h - w * 0.035, w * 0.3, w * 0.012, w * 0.006, col(LINE, 1.0));
@@ -1080,6 +1258,11 @@ impl App {
         self.txt(g, &self.wifi_label(), w - 36.0 * s, (y + (h - 13.0 * 1.17) / 2.0) * s, 13.0 * s, Kind::Reg, GREY, Align::Right, Some(w - 36.0 * s - 90.0 * s), false);
         self.txt(g, "›", w - 20.0 * s, (y + (h - 20.0 * 1.17) / 2.0) * s, 20.0 * s, Kind::Reg, LINE, Align::Right, None, false);
         let (y, h) = cards()[3];
+        self.card(g, s, y, h);
+        self.txt(g, "Bluetooth", 18.0 * s, (y + (h - 14.0 * 1.17) / 2.0) * s, 14.0 * s, Kind::Reg, DARK, Align::Left, None, false);
+        self.txt(g, &self.bt_label(), w - 36.0 * s, (y + (h - 13.0 * 1.17) / 2.0) * s, 13.0 * s, Kind::Reg, GREY, Align::Right, Some(w - 36.0 * s - 90.0 * s), false);
+        self.txt(g, "›", w - 20.0 * s, (y + (h - 20.0 * 1.17) / 2.0) * s, 20.0 * s, Kind::Reg, LINE, Align::Right, None, false);
+        let (y, h) = cards()[4];
         self.card(g, s, y, h);
         self.txt(g, "Informations", 18.0 * s, (y + (h - 14.0 * 1.17) / 2.0) * s, 14.0 * s, Kind::Reg, DARK, Align::Left, None, false);
         self.txt(g, "›", w - 20.0 * s, (y + (h - 20.0 * 1.17) / 2.0) * s, 20.0 * s, Kind::Reg, LINE, Align::Right, None, false);
@@ -1241,6 +1424,116 @@ impl App {
             self.txt(g, b, w / 2.0, (last + 12.0) * s, 12.0 * s, Kind::Reg, GREY, Align::Center, Some(w - 36.0 * s), false);
         }
         self.header(g, s, &n.ssid, true);
+    }
+
+    fn dev_row(&self, g: &mut Gfx, s: f32, y: f32, d: &bluetooth::Dev) {
+        let w = self.size.0 as f32;
+        g.rect(0.0, y, w, NET_ROW * s, col(WHITE, 1.0));
+        g.rect(14.0 * s, y + NET_ROW * s - 1.0, w - 14.0 * s, 1.0, col(LINE, 0.6));
+        self.txt(g, &d.name, 14.0 * s, y + 9.0 * s, 14.0 * s, Kind::Reg, DARK, Align::Left, Some(w - 50.0 * s), false);
+        let (sub, c) = if d.connected {
+            ("Connecté", BLUE)
+        } else if d.paired {
+            ("Jumelé", GREY)
+        } else {
+            ("Appuyer pour jumeler", GREY)
+        };
+        self.txt(g, sub, 14.0 * s, y + 29.0 * s, 11.0 * s, Kind::Reg, c, Align::Left, Some(w - 50.0 * s), false);
+        self.txt(g, "›", w - 16.0 * s, y + (NET_ROW - 20.0 * 1.17) / 2.0 * s, 20.0 * s, Kind::Reg, LINE, Align::Right, None, false);
+    }
+
+    fn render_bt(&self, g: &mut Gfx, s: f32) {
+        let (w, h) = (self.size.0 as f32, self.size.1 as f32);
+        let present = self.bt.as_ref().map(|b| b.present).unwrap_or(false);
+        let powered = self.bt.as_ref().map(|b| b.powered).unwrap_or(false);
+        let devs: &[bluetooth::Dev] = self.bt.as_ref().map(|b| &b.devs[..]).unwrap_or(&[]);
+        if powered {
+            let mut y = (LIST_Y - self.scroll) * s;
+            for d in devs {
+                if y + NET_ROW * s > 0.0 && y < h {
+                    self.dev_row(g, s, y, d);
+                }
+                y += NET_ROW * s;
+            }
+        }
+        g.rect(0.0, 0.0, w, LIST_Y * s, col(BG, 1.0));
+        let (ty, th) = (HEADER + 10.0, 48.0);
+        self.card(g, s, ty, th);
+        self.txt(g, "Bluetooth", 18.0 * s, (ty + (th - 14.0 * 1.17) / 2.0) * s, 14.0 * s, Kind::Reg, DARK, Align::Left, None, false);
+        if self.bt.is_some() && present {
+            self.switch(g, s, w - 18.0 * s - 46.0 * s, (ty + 10.0) * s, powered);
+        }
+        let status = if let Some(b) = &self.busy {
+            b.clone()
+        } else if let Some(e) = &self.bt_err {
+            e.clone()
+        } else if self.bt.is_none() {
+            String::new()
+        } else if !present {
+            "Aucun contrôleur Bluetooth détecté".to_string()
+        } else if !powered {
+            "Bluetooth désactivé".to_string()
+        } else if devs.is_empty() {
+            "Aucun appareil trouvé".to_string()
+        } else {
+            "Appareils".to_string()
+        };
+        let err = self.busy.is_none() && (self.bt_err.is_some() || (self.bt.is_some() && !present));
+        self.txt(g, &status, 18.0 * s, (HEADER + 10.0 + 48.0 + 9.0) * s, 11.0 * s, Kind::Reg, if err { RED } else { GREY }, Align::Left, Some(w - 36.0 * s), false);
+        self.header(g, s, "Bluetooth", true);
+        if powered {
+            self.txt(g, "Rechercher", w - 12.0 * s, (HEADER * s - 13.0 * s * 1.17) / 2.0, 13.0 * s, Kind::Reg, BLUE, Align::Right, None, false);
+        }
+    }
+
+    fn render_dev(&self, g: &mut Gfx, s: f32) {
+        let w = self.size.0 as f32;
+        let Some(d) = &self.bt_sel else {
+            self.header(g, s, "Bluetooth", true);
+            return;
+        };
+        self.card(g, s, NET_INFO_Y, NET_INFO_H);
+        let etat = if d.connected {
+            "Connecté"
+        } else if d.paired {
+            "Jumelé"
+        } else {
+            "Non jumelé"
+        };
+        let rows = [
+            ("Adresse", d.mac.clone()),
+            ("Confiance", if d.trusted { "Oui".to_string() } else { "Non".to_string() }),
+            ("État", etat.to_string()),
+        ];
+        for (i, (k, v)) in rows.iter().enumerate() {
+            let ry = NET_INFO_Y + 4.0 + i as f32 * 26.0;
+            self.txt(g, k, 18.0 * s, (ry + 6.0) * s, 12.0 * s, Kind::Reg, GREY, Align::Left, None, false);
+            self.txt(g, v, w - 18.0 * s, (ry + 6.0) * s, 12.0 * s, Kind::Reg, if i == 2 && d.connected { BLUE } else { DARK }, Align::Right, Some(w - 36.0 * s - 80.0 * s), false);
+            if i < 2 {
+                g.rect(18.0 * s, (ry + 26.0) * s - 1.0, w - 36.0 * s, 1.0, col(LINE, 0.6));
+            }
+        }
+        let mut last = NET_NEXT_Y;
+        for (b, by, label) in self.dev_buttons(d) {
+            let (bx, bw) = (CARD_X * s, w - 2.0 * CARD_X * s);
+            let (bg, fg) = match b {
+                Btn::Connect => (BLUE, WHITE),
+                Btn::Disconnect => (WHITE, DARK),
+                Btn::Forget => (WHITE, RED),
+            };
+            if bg == WHITE {
+                g.rrect(bx, by * s, bw, BTN_H * s, 10.0 * s, col(LINE, 1.0));
+                g.rrect(bx + 1.0, by * s + 1.0, bw - 2.0, BTN_H * s - 2.0, 9.0 * s, col(WHITE, 1.0));
+            } else {
+                g.rrect(bx, by * s, bw, BTN_H * s, 10.0 * s, col(bg, 1.0));
+            }
+            self.txt(g, label, w / 2.0, (by + (BTN_H - 15.0 * 1.17) / 2.0) * s, 15.0 * s, Kind::Bold, fg, Align::Center, Some(bw - 20.0 * s), false);
+            last = by + BTN_H;
+        }
+        if let Some(b) = &self.busy {
+            self.txt(g, b, w / 2.0, (last + 12.0) * s, 12.0 * s, Kind::Reg, GREY, Align::Center, Some(w - 36.0 * s), false);
+        }
+        self.header(g, s, &d.name, true);
     }
 
     fn render_info(&self, g: &mut Gfx, s: f32) {
@@ -1431,7 +1724,8 @@ impl ApplicationHandler for App {
     }
 
     fn about_to_wait(&mut self, el: &ActiveEventLoop) {
-        if self.drain() {
+        let (a, b) = (self.drain(), self.drain_bt());
+        if a || b {
             self.redraw_later();
         }
         let mut until: Option<Instant> = None;
@@ -1535,6 +1829,7 @@ fn main() {
         let mut app = App::new(size);
         if args.iter().any(|a| a == "--demo") {
             app.wifi = Some(wifi::demo());
+            app.bt = Some(bluetooth::demo());
         }
         match val("--page").as_deref() {
             Some("info") => {
@@ -1542,6 +1837,11 @@ fn main() {
                 app.page = Page::Info;
             }
             Some("wifi") => app.page = Page::Wifi,
+            Some("bt") => app.page = Page::Bt,
+            Some("btdev") => {
+                app.bt_sel = app.bt.as_ref().and_then(|st| st.devs.get(3).cloned());
+                app.page = Page::BtDev;
+            }
             Some(p @ ("wifinet" | "wifipass")) => {
                 let i = if p == "wifinet" { 1 } else { 3 };
                 app.sel = app.wifi.as_ref().and_then(|st| st.nets.get(i).cloned());
@@ -1572,6 +1872,7 @@ fn main() {
     el.set_control_flow(ControlFlow::Wait);
     let mut app = App::new(size);
     app.job("", wifi::Action::None, false); // état du Wi-Fi pour la carte de la page principale
+    app.bt_job("", bluetooth::Action::None); // état du Bluetooth pour la carte de la page principale
     if let Err(e) = el.run_app(&mut app) {
         eprintln!("settings : {e}");
         std::process::exit(1);
