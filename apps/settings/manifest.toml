@@ -1,7 +1,7 @@
 manifest_version = 1
 id          = "com.exemple.settings"
 name        = "Réglages"
-version     = "1.2.0"
+version     = "1.2.1"
 arch        = "aarch64"
 exec        = "bin/settings"
 icon        = "icon.png"

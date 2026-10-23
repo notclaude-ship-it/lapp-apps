@@ -90,6 +90,24 @@ fn nm(args: &[&str]) -> Result<String, String> {
     Err(nice_error(&raw))
 }
 
+/// Exécute une commande nmcli avec sudo et demande le mot de passe si nécessaire.
+fn nm_sudo(args: &[&str]) -> Result<String, String> {
+    let mut cmd = vec!["sudo", "nmcli"];
+    cmd.extend_from_slice(args);
+    let o = hostcmd::run(&cmd, "")?;
+    if o.code == 0 {
+        return Ok(o.out);
+    }
+    let raw = [o.err.as_str(), o.out.as_str()]
+        .iter()
+        .flat_map(|s| s.lines())
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or("échec de nmcli")
+        .to_string();
+    Err(nice_error(&raw))
+}
+
 /// Découpe une ligne du mode « terse » de nmcli : séparateur `:`, `\:` et `\\` échappés.
 fn split_terse(line: &str) -> Vec<String> {
     let mut out = vec![];
@@ -178,7 +196,7 @@ pub fn run(a: Action, rescan: bool) -> Done {
     let note = match a {
         Action::None => None,
         Action::Toggle(on) => {
-            let r = nm(&["radio", "wifi", if on { "on" } else { "off" }]);
+            let r = nm_sudo(&["radio", "wifi", if on { "on" } else { "off" }]);
             if on && r.is_ok() {
                 std::thread::sleep(Duration::from_secs(2)); // laisse la puce se réveiller avant de balayer
                 rescan = true;
@@ -187,9 +205,9 @@ pub fn run(a: Action, rescan: bool) -> Done {
         }
         Action::Connect(n, pw) => {
             let r = match (&n.profile, pw.is_empty()) {
-                (Some(p), true) => nm(&["connection", "up", "id", p]),
-                (_, true) => nm(&["dev", "wifi", "connect", &n.ssid]),
-                (_, false) => nm(&["dev", "wifi", "connect", &n.ssid, "password", &pw]),
+                (Some(p), true) => nm_sudo(&["connection", "up", "id", p]),
+                (_, true) => nm_sudo(&["dev", "wifi", "connect", &n.ssid]),
+                (_, false) => nm_sudo(&["dev", "wifi", "connect", &n.ssid, "password", &pw]),
             };
             match r {
                 Ok(_) => {
@@ -199,7 +217,7 @@ pub fn run(a: Action, rescan: bool) -> Done {
                 Err(e) => {
                     if n.profile.is_none() && !pw.is_empty() {
                         // nmcli laisse un profil inutilisable quand le mot de passe est refusé
-                        let _ = nm(&["connection", "delete", "id", &n.ssid]);
+                        let _ = nm_sudo(&["connection", "delete", "id", &n.ssid]);
                     }
                     Some(Err(e))
                 }
@@ -207,13 +225,13 @@ pub fn run(a: Action, rescan: bool) -> Done {
         }
         Action::Disconnect(n) => {
             let name = n.profile.clone().unwrap_or_else(|| n.ssid.clone());
-            let r = nm(&["connection", "down", "id", &name]);
+            let r = nm_sudo(&["connection", "down", "id", &name]);
             back = r.is_ok();
             Some(r.map(|_| format!("Déconnecté de {}", n.ssid)))
         }
         Action::Forget(n) => {
             let name = n.profile.clone().unwrap_or_else(|| n.ssid.clone());
-            let r = nm(&["connection", "delete", "id", &name]);
+            let r = nm_sudo(&["connection", "delete", "id", &name]);
             back = r.is_ok();
             Some(r.map(|_| format!("{} oublié", n.ssid)))
         }
