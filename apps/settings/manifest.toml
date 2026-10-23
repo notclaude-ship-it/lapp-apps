@@ -1,8 +1,9 @@
 manifest_version = 1
 id          = "com.exemple.settings"
 name        = "Réglages"
-version     = "1.0.3"
+version     = "1.1.0"
 arch        = "aarch64"
 exec        = "bin/settings"
 icon        = "icon.png"
-permissions = ["display", "storage", "network", "system", "gpu", "audio"]
+permissions = ["display", "storage", "network", "system", "gpu", "audio", "commands"]
+commands    = ["nmcli"]

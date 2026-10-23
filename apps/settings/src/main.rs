@@ -1,16 +1,22 @@
 // settings : réglages tactiles pour lapp (écran portrait 272x480), rendu OpenGL ES (repli CPU).
 //
 // - Luminosité : /sys/class/backlight/* ; Volume : PipeWire (wpctl), repli ALSA (amixer) ; Informations : appareil, noyau, mémoire, stockage, batterie, IP
+// - Wi-Fi : activer/désactiver, lister les réseaux, se connecter (mot de passe au clavier virtuel de lapp-home), déconnecter, oublier
+//   (NetworkManager : nmcli est lancé sur l'hôte via le courtier de commandes, voir wifi.rs)
 // - quitter : glisser vers le haut depuis le bord bas de l'écran, ou Echap
-// Permissions : display, system (/sys en écriture + /dev/snd), network (adresse IP), storage.
-// Tests hors écran : settings --screenshot out.png [--page info] ; settings --icon icon.png
+// Permissions : display, system (/sys en écriture + /dev/snd), network (adresse IP), storage, commands (nmcli).
+// Tests hors écran : settings --screenshot out.png [--page info|wifi|wifinet|wifipass] [--demo] ; settings --icon icon.png
 
 mod gfx;
+mod hostcmd;
+mod kbd;
+mod wifi;
 
 use std::fs;
 use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use ab_glyph::{point, Font, FontVec, PxScale, ScaleFont};
@@ -48,6 +54,18 @@ const HEADER: f32 = 44.0;
 const PATHBAR: f32 = 20.0;
 const ROW: f32 = 54.0;
 const PAD_BOTTOM: f32 = 18.0;
+const GREEN: Rgb = [0.20, 0.78, 0.35];
+const RED: Rgb = [0.86, 0.20, 0.20];
+
+// page Wi-Fi : liste des réseaux (pixels de conception)
+const LIST_Y: f32 = 128.0;
+const NET_ROW: f32 = 52.0;
+// page d'un réseau
+const NET_INFO_Y: f32 = HEADER + 10.0;
+const NET_INFO_H: f32 = 84.0;
+const NET_NEXT_Y: f32 = NET_INFO_Y + NET_INFO_H + 10.0;
+const PASS_H: f32 = 46.0;
+const BTN_H: f32 = 44.0;
 
 // ------------------------------------------------------------------ dessin (pixmaps)
 
@@ -509,6 +527,15 @@ fn info_rows() -> Vec<(String, String)> {
 enum Page {
     Main,
     Info,
+    Wifi,
+    WifiNet,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Btn {
+    Connect,
+    Disconnect,
+    Forget,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -528,9 +555,19 @@ const SL_X0: f32 = 24.0;
 const SL_X1: f32 = 248.0;
 
 /// (y, hauteur) des trois cartes de la page principale, en pixels de conception (272 de large).
-fn cards() -> [(f32, f32); 3] {
+fn cards() -> [(f32, f32); 4] {
     let y0 = HEADER + 14.0;
-    [(y0, 68.0), (y0 + 78.0, 68.0), (y0 + 156.0, 48.0)]
+    [(y0, 68.0), (y0 + 78.0, 68.0), (y0 + 156.0, 48.0), (y0 + 214.0, 48.0)]
+}
+
+/// Identifiant X11 de la fenêtre de premier niveau (pour le clavier virtuel de lapp-home).
+fn x11_window(w: &Window) -> Option<u32> {
+    use winit::raw_window_handle::RawWindowHandle;
+    match w.window_handle().ok()?.as_raw() {
+        RawWindowHandle::Xlib(h) => Some(h.window as u32),
+        RawWindowHandle::Xcb(h) => Some(h.window.get()),
+        _ => None,
+    }
 }
 
 struct App {
@@ -551,6 +588,18 @@ struct App {
     info: Vec<(String, String)>,
     toast: Option<(String, Instant)>,
     last_apply: Instant,
+    // Wi-Fi
+    wifi: Option<wifi::State>,
+    wifi_err: Option<String>,
+    sel: Option<wifi::Net>,
+    pass: String,
+    show_pass: bool,
+    scroll: f32,
+    last_y: f32,
+    jobs: usize,
+    busy: Option<String>,
+    inbox: Arc<Mutex<Vec<wifi::Done>>>,
+    kbd: Option<kbd::KbdClient>,
 }
 
 impl App {
@@ -575,6 +624,17 @@ impl App {
             info: Vec::new(),
             toast: None,
             last_apply: Instant::now(),
+            wifi: None,
+            wifi_err: None,
+            sel: None,
+            pass: String::new(),
+            show_pass: false,
+            scroll: 0.0,
+            last_y: 0.0,
+            jobs: 0,
+            busy: None,
+            inbox: Arc::new(Mutex::new(Vec::new())),
+            kbd: None,
         }
     }
 
@@ -629,26 +689,272 @@ impl App {
         }
     }
 
+    // -------------------------------------------------------------- Wi-Fi (tâches et clavier)
+
+    fn kbd_show(&mut self) {
+        let Some(win) = self.window.as_ref().and_then(|w| x11_window(w)) else { return };
+        if self.kbd.is_none() {
+            self.kbd = kbd::KbdClient::connect();
+        }
+        if let Some(k) = &self.kbd {
+            k.set(win, 1);
+        }
+    }
+
+    fn kbd_hide(&mut self) {
+        let Some(win) = self.window.as_ref().and_then(|w| x11_window(w)) else { return };
+        if let Some(k) = &self.kbd {
+            k.set(win, 0);
+        }
+    }
+
+    /// Lance une action Wi-Fi dans un thread (nmcli peut mettre plusieurs secondes).
+    fn job(&mut self, label: &str, act: wifi::Action, rescan: bool) {
+        self.busy = Some(label.to_string());
+        self.jobs += 1;
+        let inbox = self.inbox.clone();
+        std::thread::spawn(move || {
+            let d = wifi::run(act, rescan);
+            if let Ok(mut q) = inbox.lock() {
+                q.push(d);
+            }
+        });
+        self.redraw_later();
+    }
+
+    /// Récupère les résultats des tâches terminées ; `true` s'il y en avait.
+    fn drain(&mut self) -> bool {
+        let done: Vec<wifi::Done> = match self.inbox.lock() {
+            Ok(mut q) => q.drain(..).collect(),
+            Err(_) => return false,
+        };
+        if done.is_empty() {
+            return false;
+        }
+        for d in done {
+            self.jobs = self.jobs.saturating_sub(1);
+            match d.state {
+                Ok(st) => {
+                    self.wifi_err = None;
+                    if let Some(sel) = self.sel.clone() {
+                        let fresh = st.nets.iter().find(|n| n.ssid == sel.ssid).cloned();
+                        self.sel = fresh.or(Some(sel));
+                    }
+                    let max = ((st.nets.len() as f32 * NET_ROW) - (self.size.1 as f32 / self.scale() - LIST_Y - PAD_BOTTOM)).max(0.0);
+                    self.scroll = self.scroll.min(max);
+                    self.wifi = Some(st);
+                }
+                Err(e) => self.wifi_err = Some(e),
+            }
+            match d.note {
+                Some(Ok(m)) if !m.is_empty() => self.set_toast(m),
+                Some(Err(e)) => self.set_toast(e),
+                _ => {}
+            }
+            if d.back && self.page == Page::WifiNet {
+                self.leave_net();
+            }
+        }
+        if self.jobs == 0 {
+            self.busy = None;
+        }
+        true
+    }
+
+    fn open_wifi(&mut self) {
+        self.page = Page::Wifi;
+        self.scroll = 0.0;
+        let on = self.wifi.as_ref().map(|s| s.enabled).unwrap_or(true);
+        self.job("Recherche des réseaux…", wifi::Action::None, on);
+    }
+
+    fn leave_net(&mut self) {
+        self.kbd_hide();
+        self.page = Page::Wifi;
+        self.sel = None;
+        self.pass.clear();
+        self.show_pass = false;
+    }
+
+    fn back(&mut self) {
+        match self.page {
+            Page::Info | Page::Wifi => self.page = Page::Main,
+            Page::WifiNet => self.leave_net(),
+            Page::Main => {}
+        }
+        self.redraw_later();
+    }
+
+    fn max_scroll(&self) -> f32 {
+        let n = self.wifi.as_ref().map(|w| w.nets.len()).unwrap_or(0) as f32;
+        let view = self.size.1 as f32 / self.scale() - LIST_Y - PAD_BOTTOM;
+        (n * NET_ROW - view).max(0.0)
+    }
+
+    fn connect_sel(&mut self) {
+        let Some(n) = self.sel.clone() else { return };
+        let pw = if n.needs_pass() { self.pass.clone() } else { String::new() };
+        self.kbd_hide();
+        let label = format!("Connexion à {}…", n.ssid);
+        self.job(&label, wifi::Action::Connect(n, pw), false);
+    }
+
+    /// Boutons de la page d'un réseau : (bouton, y, libellé).
+    fn net_buttons(&self, n: &wifi::Net) -> Vec<(Btn, f32, &'static str)> {
+        let mut y = NET_NEXT_Y + if n.needs_pass() { PASS_H + 10.0 } else { 0.0 };
+        let mut v = vec![];
+        if n.active {
+            v.push((Btn::Disconnect, y, "Déconnecter"));
+        } else {
+            v.push((Btn::Connect, y, "Se connecter"));
+        }
+        y += BTN_H + 10.0;
+        if n.profile.is_some() {
+            v.push((Btn::Forget, y, "Oublier ce réseau"));
+        }
+        v
+    }
+
+    // -------------------------------------------------------------- interaction
+
     fn tap(&mut self, x: f32, y: f32) {
         let s = self.scale();
+        let w = self.size.0 as f32;
         if y < HEADER * s {
-            if x < 84.0 * s && self.page == Page::Info {
-                self.page = Page::Main;
+            if x < 84.0 * s {
+                self.back();
+            } else if self.page == Page::Wifi && x > w - 96.0 * s && self.jobs == 0 {
+                self.job("Recherche des réseaux…", wifi::Action::None, true);
             }
             return;
         }
-        if self.page == Page::Main {
-            let (cy, ch) = cards()[2];
-            if y >= cy * s && y < (cy + ch) * s {
-                self.info = info_rows();
-                self.page = Page::Info;
+        match self.page {
+            Page::Main => {
+                for (i, (cy, ch)) in cards().iter().enumerate().skip(2) {
+                    if y >= cy * s && y < (cy + ch) * s {
+                        if i == 2 {
+                            self.open_wifi();
+                        } else {
+                            self.info = info_rows();
+                            self.page = Page::Info;
+                        }
+                    }
+                }
             }
+            Page::Wifi => self.tap_wifi(y),
+            Page::WifiNet => self.tap_net(x, y),
+            Page::Info => {}
+        }
+    }
+
+    fn tap_wifi(&mut self, y: f32) {
+        let s = self.scale();
+        let Some(st) = self.wifi.clone() else { return };
+        let (ty, th) = (HEADER + 10.0, 48.0);
+        if y >= ty * s && y < (ty + th) * s {
+            if self.jobs == 0 {
+                let on = !st.enabled;
+                self.job(if on { "Activation…" } else { "Désactivation…" }, wifi::Action::Toggle(on), on);
+            }
+            return;
+        }
+        if !st.enabled || y < LIST_Y * s {
+            return;
+        }
+        let idx = (y / s - LIST_Y + self.scroll) / NET_ROW;
+        if idx < 0.0 {
+            return;
+        }
+        if let Some(n) = st.nets.get(idx as usize) {
+            self.sel = Some(n.clone());
+            self.pass.clear();
+            self.show_pass = false;
+            self.page = Page::WifiNet;
+            if n.needs_pass() {
+                self.kbd_show();
+            }
+        }
+    }
+
+    fn tap_net(&mut self, x: f32, y: f32) {
+        let s = self.scale();
+        let w = self.size.0 as f32;
+        let Some(n) = self.sel.clone() else { return };
+        if self.jobs > 0 {
+            return;
+        }
+        if n.needs_pass() && y >= NET_NEXT_Y * s && y < (NET_NEXT_Y + PASS_H) * s {
+            if x > w - 84.0 * s {
+                self.show_pass = !self.show_pass;
+            } else {
+                self.kbd_show();
+            }
+            return;
+        }
+        if x < CARD_X * s || x > w - CARD_X * s {
+            return;
+        }
+        for (b, by, _) in self.net_buttons(&n) {
+            if y >= by * s && y < (by + BTN_H) * s {
+                match b {
+                    Btn::Connect => {
+                        if n.needs_pass() && self.pass.chars().count() < 8 {
+                            self.set_toast("Mot de passe : 8 caractères minimum".into());
+                        } else {
+                            self.connect_sel();
+                        }
+                    }
+                    Btn::Disconnect => self.job("Déconnexion…", wifi::Action::Disconnect(n.clone()), false),
+                    Btn::Forget => self.job("Suppression…", wifi::Action::Forget(n.clone()), false),
+                }
+                return;
+            }
+        }
+    }
+
+    /// Touches du clavier (physique, ou virtuel de lapp-home via XTEST).
+    fn key(&mut self, el: &ActiveEventLoop, ev: &KeyEvent) {
+        if self.page == Page::WifiNet && self.sel.as_ref().map(|n| n.needs_pass()).unwrap_or(false) {
+            match &ev.logical_key {
+                Key::Named(NamedKey::Backspace) => {
+                    self.pass.pop();
+                }
+                Key::Named(NamedKey::Enter) => {
+                    if self.jobs == 0 && self.pass.chars().count() >= 8 {
+                        self.connect_sel();
+                    }
+                }
+                Key::Named(NamedKey::Escape) => self.back(),
+                _ => {
+                    if let Some(t) = &ev.text {
+                        for c in t.chars().filter(|c| !c.is_control()) {
+                            if self.pass.chars().count() < 63 {
+                                self.pass.push(c);
+                            }
+                        }
+                    }
+                }
+            }
+            self.redraw_later();
+            return;
+        }
+        match &ev.logical_key {
+            Key::Named(NamedKey::Escape) => {
+                if self.page == Page::Main {
+                    el.exit();
+                } else {
+                    self.back();
+                }
+            }
+            Key::Named(NamedKey::Backspace) => self.back(),
+            _ => {}
         }
     }
 
     fn press(&mut self, x: f32, y: f32) {
         let s = self.scale();
         self.press = Some((x, y, false));
+        self.last_y = y;
         self.drag = None;
         if self.page == Page::Main && x >= CARD_X * s && x <= self.size.0 as f32 - CARD_X * s {
             let cs = cards();
@@ -675,6 +981,11 @@ impl App {
                 p.2 = true;
             }
         }
+        if self.page == Page::Wifi && self.drag.is_none() && self.press.map(|p| p.2).unwrap_or(false) {
+            let max = self.max_scroll();
+            self.scroll = (self.scroll - (y - self.last_y) / s).clamp(0.0, max);
+        }
+        self.last_y = y;
         self.redraw_later();
     }
 
@@ -706,6 +1017,8 @@ impl App {
         match self.page {
             Page::Main => self.render_main(g, s),
             Page::Info => self.render_info(g, s),
+            Page::Wifi => self.render_wifi(g, s),
+            Page::WifiNet => self.render_net(g, s),
         }
         g.rect(0.0, h - PAD_BOTTOM * s, w, PAD_BOTTOM * s, col(BG, 1.0));
         g.rrect(w * 0.35, h - w * 0.035, w * 0.3, w * 0.012, w * 0.006, col(LINE, 1.0));
@@ -763,9 +1076,171 @@ impl App {
         self.slider(g, s, 1, "Volume", self.vol.as_ref().map(|v| v.1));
         let (y, h) = cards()[2];
         self.card(g, s, y, h);
+        self.txt(g, "Wi-Fi", 18.0 * s, (y + (h - 14.0 * 1.17) / 2.0) * s, 14.0 * s, Kind::Reg, DARK, Align::Left, None, false);
+        self.txt(g, &self.wifi_label(), w - 36.0 * s, (y + (h - 13.0 * 1.17) / 2.0) * s, 13.0 * s, Kind::Reg, GREY, Align::Right, Some(w - 36.0 * s - 90.0 * s), false);
+        self.txt(g, "›", w - 20.0 * s, (y + (h - 20.0 * 1.17) / 2.0) * s, 20.0 * s, Kind::Reg, LINE, Align::Right, None, false);
+        let (y, h) = cards()[3];
+        self.card(g, s, y, h);
         self.txt(g, "Informations", 18.0 * s, (y + (h - 14.0 * 1.17) / 2.0) * s, 14.0 * s, Kind::Reg, DARK, Align::Left, None, false);
         self.txt(g, "›", w - 20.0 * s, (y + (h - 20.0 * 1.17) / 2.0) * s, 20.0 * s, Kind::Reg, LINE, Align::Right, None, false);
         self.header(g, s, "Réglages", false);
+    }
+
+    fn wifi_label(&self) -> String {
+        match (&self.wifi, &self.wifi_err) {
+            (Some(st), _) if !st.enabled => "Désactivé".into(),
+            (Some(st), _) => st.nets.iter().find(|n| n.active).map(|n| n.ssid.clone()).unwrap_or_else(|| "Non connecté".into()),
+            (None, Some(_)) => "Indisponible".into(),
+            (None, None) => "…".into(),
+        }
+    }
+
+    fn switch(&self, g: &mut Gfx, s: f32, x: f32, y: f32, on: bool) {
+        g.rrect(x, y, 46.0 * s, 28.0 * s, 14.0 * s, col(if on { GREEN } else { LINE }, 1.0));
+        let kx = if on { x + 20.0 * s } else { x + 2.0 * s };
+        g.rrect(kx, y + 2.0 * s, 24.0 * s, 24.0 * s, 12.0 * s, col(WHITE, 1.0));
+    }
+
+    fn net_row(&self, g: &mut Gfx, s: f32, y: f32, n: &wifi::Net) {
+        let w = self.size.0 as f32;
+        g.rect(0.0, y, w, NET_ROW * s, col(WHITE, 1.0));
+        g.rect(14.0 * s, y + NET_ROW * s - 1.0, w - 14.0 * s, 1.0, col(LINE, 0.6));
+        self.txt(g, &n.ssid, 14.0 * s, y + 9.0 * s, 14.0 * s, Kind::Reg, DARK, Align::Left, Some(w - 100.0 * s), false);
+        let (sub, c) = if n.active {
+            ("Connecté".to_string(), BLUE)
+        } else if n.profile.is_some() {
+            ("Enregistré".to_string(), GREY)
+        } else if n.secured() {
+            (n.security.clone(), GREY)
+        } else {
+            ("Ouvert".to_string(), GREY)
+        };
+        self.txt(g, &sub, 14.0 * s, y + 29.0 * s, 11.0 * s, Kind::Reg, c, Align::Left, Some(w - 100.0 * s), false);
+        // barres de signal
+        let base = y + (NET_ROW / 2.0 + 8.0) * s;
+        for (i, th) in [15u8, 35, 55, 75].iter().enumerate() {
+            let bh = (5.0 + 3.5 * i as f32) * s;
+            let on = n.signal >= *th;
+            g.rrect(w - 66.0 * s + i as f32 * 8.0 * s, base - bh, 5.0 * s, bh, 1.5 * s, col(if on { DARK } else { LINE }, 1.0));
+        }
+        self.txt(g, "›", w - 16.0 * s, y + (NET_ROW - 20.0 * 1.17) / 2.0 * s, 20.0 * s, Kind::Reg, LINE, Align::Right, None, false);
+    }
+
+    fn render_wifi(&self, g: &mut Gfx, s: f32) {
+        let (w, h) = (self.size.0 as f32, self.size.1 as f32);
+        let enabled = self.wifi.as_ref().map(|st| st.enabled).unwrap_or(false);
+        let nets: &[wifi::Net] = self.wifi.as_ref().map(|st| &st.nets[..]).unwrap_or(&[]);
+        // lignes défilantes d'abord ; le haut de page les recouvre ensuite
+        if enabled {
+            let mut y = (LIST_Y - self.scroll) * s;
+            for n in nets {
+                if y + NET_ROW * s > 0.0 && y < h {
+                    self.net_row(g, s, y, n);
+                }
+                y += NET_ROW * s;
+            }
+        }
+        g.rect(0.0, 0.0, w, LIST_Y * s, col(BG, 1.0));
+        // carte de l'interrupteur
+        let (ty, th) = (HEADER + 10.0, 48.0);
+        self.card(g, s, ty, th);
+        self.txt(g, "Wi-Fi", 18.0 * s, (ty + (th - 14.0 * 1.17) / 2.0) * s, 14.0 * s, Kind::Reg, DARK, Align::Left, None, false);
+        if self.wifi.is_some() {
+            self.switch(g, s, w - 18.0 * s - 46.0 * s, (ty + 10.0) * s, enabled);
+        }
+        // ligne d'état
+        let status = if let Some(b) = &self.busy {
+            b.clone()
+        } else if let Some(e) = &self.wifi_err {
+            e.clone()
+        } else if self.wifi.is_none() {
+            String::new()
+        } else if !enabled {
+            "Wi-Fi désactivé".to_string()
+        } else if nets.is_empty() {
+            "Aucun réseau trouvé".to_string()
+        } else {
+            "Réseaux disponibles".to_string()
+        };
+        let err = self.busy.is_none() && self.wifi_err.is_some();
+        self.txt(g, &status, 18.0 * s, (HEADER + 10.0 + 48.0 + 9.0) * s, 11.0 * s, Kind::Reg, if err { RED } else { GREY }, Align::Left, Some(w - 36.0 * s), false);
+        self.header(g, s, "Wi-Fi", true);
+        self.txt(g, "Actualiser", w - 12.0 * s, (HEADER * s - 13.0 * s * 1.17) / 2.0, 13.0 * s, Kind::Reg, BLUE, Align::Right, None, false);
+    }
+
+    fn render_net(&self, g: &mut Gfx, s: f32) {
+        let w = self.size.0 as f32;
+        let Some(n) = &self.sel else {
+            self.header(g, s, "Wi-Fi", true);
+            return;
+        };
+        // informations
+        self.card(g, s, NET_INFO_Y, NET_INFO_H);
+        let etat = if n.active {
+            "Connecté"
+        } else if n.profile.is_some() {
+            "Enregistré"
+        } else {
+            "Non connecté"
+        };
+        let rows = [
+            ("Signal", format!("{} %", n.signal)),
+            ("Sécurité", if n.secured() { n.security.clone() } else { "Ouvert".to_string() }),
+            ("État", etat.to_string()),
+        ];
+        for (i, (k, v)) in rows.iter().enumerate() {
+            let ry = NET_INFO_Y + 4.0 + i as f32 * 26.0;
+            self.txt(g, k, 18.0 * s, (ry + 6.0) * s, 12.0 * s, Kind::Reg, GREY, Align::Left, None, false);
+            self.txt(g, v, w - 18.0 * s, (ry + 6.0) * s, 12.0 * s, Kind::Reg, if i == 2 && n.active { BLUE } else { DARK }, Align::Right, Some(w - 36.0 * s - 80.0 * s), false);
+            if i < 2 {
+                g.rect(18.0 * s, (ry + 26.0) * s - 1.0, w - 36.0 * s, 1.0, col(LINE, 0.6));
+            }
+        }
+        // mot de passe
+        if n.needs_pass() {
+            self.card(g, s, NET_NEXT_Y, PASS_H);
+            let ty = (NET_NEXT_Y + (PASS_H - 14.0 * 1.17) / 2.0) * s;
+            let (x0, x1) = (18.0 * s, w - 96.0 * s);
+            if self.pass.is_empty() {
+                self.txt(g, "Mot de passe", x0, ty, 14.0 * s, Kind::Reg, GREY, Align::Left, None, false);
+            } else if self.show_pass {
+                self.txt(g, &self.pass, x0, ty, 14.0 * s, Kind::Reg, DARK, Align::Left, Some(x1 - x0), true);
+            } else {
+                let step = 13.0 * s;
+                let max = ((x1 - x0) / step) as usize;
+                let count = self.pass.chars().count();
+                let skip = count.saturating_sub(max);
+                let cy = (NET_NEXT_Y + PASS_H / 2.0) * s;
+                for i in 0..count - skip {
+                    g.rrect(x0 + i as f32 * step, cy - 4.0 * s, 8.0 * s, 8.0 * s, 4.0 * s, col(DARK, 1.0));
+                }
+            }
+            let lbl = if self.show_pass { "Masquer" } else { "Afficher" };
+            self.txt(g, lbl, w - 18.0 * s, (NET_NEXT_Y + (PASS_H - 12.0 * 1.17) / 2.0) * s, 12.0 * s, Kind::Reg, BLUE, Align::Right, None, false);
+        }
+        // boutons
+        let mut last = NET_NEXT_Y;
+        for (b, by, label) in self.net_buttons(n) {
+            let (bx, bw) = (CARD_X * s, w - 2.0 * CARD_X * s);
+            let (bg, fg) = match b {
+                Btn::Connect if n.needs_pass() && self.pass.chars().count() < 8 => ([0.62, 0.76, 0.96], WHITE),
+                Btn::Connect => (BLUE, WHITE),
+                Btn::Disconnect => (WHITE, DARK),
+                Btn::Forget => (WHITE, RED),
+            };
+            if bg == WHITE {
+                g.rrect(bx, by * s, bw, BTN_H * s, 10.0 * s, col(LINE, 1.0));
+                g.rrect(bx + 1.0, by * s + 1.0, bw - 2.0, BTN_H * s - 2.0, 9.0 * s, col(WHITE, 1.0));
+            } else {
+                g.rrect(bx, by * s, bw, BTN_H * s, 10.0 * s, col(bg, 1.0));
+            }
+            self.txt(g, label, w / 2.0, (by + (BTN_H - 15.0 * 1.17) / 2.0) * s, 15.0 * s, Kind::Bold, fg, Align::Center, Some(bw - 20.0 * s), false);
+            last = by + BTN_H;
+        }
+        if let Some(b) = &self.busy {
+            self.txt(g, b, w / 2.0, (last + 12.0) * s, 12.0 * s, Kind::Reg, GREY, Align::Center, Some(w - 36.0 * s), false);
+        }
+        self.header(g, s, &n.ssid, true);
     }
 
     fn render_info(&self, g: &mut Gfx, s: f32) {
@@ -956,13 +1431,24 @@ impl ApplicationHandler for App {
     }
 
     fn about_to_wait(&mut self, el: &ActiveEventLoop) {
-        match &self.toast {
-            Some((_, until)) if Instant::now() >= *until => {
+        if self.drain() {
+            self.redraw_later();
+        }
+        let mut until: Option<Instant> = None;
+        if let Some((_, t)) = &self.toast {
+            if Instant::now() >= *t {
                 self.toast = None;
                 self.redraw_later();
-                el.set_control_flow(ControlFlow::Wait);
+            } else {
+                until = Some(*t);
             }
-            Some((_, until)) => el.set_control_flow(ControlFlow::WaitUntil(*until)),
+        }
+        if self.jobs > 0 {
+            let n = Instant::now() + Duration::from_millis(150);
+            until = Some(until.map_or(n, |u| u.min(n)));
+        }
+        match until {
+            Some(u) => el.set_control_flow(ControlFlow::WaitUntil(u)),
             None => el.set_control_flow(ControlFlow::Wait),
         }
     }
@@ -972,16 +1458,7 @@ impl ApplicationHandler for App {
             WindowEvent::CloseRequested => el.exit(),
             WindowEvent::Resized(_) => self.redraw_later(),
             WindowEvent::RedrawRequested => self.redraw(),
-            WindowEvent::KeyboardInput { event: KeyEvent { logical_key: Key::Named(k), state: ElementState::Pressed, .. }, .. } => {
-                if k == NamedKey::Escape || k == NamedKey::Backspace {
-                    if self.page == Page::Info {
-                        self.page = Page::Main;
-                        self.redraw_later();
-                    } else if k == NamedKey::Escape {
-                        el.exit();
-                    }
-                }
-            }
+            WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed => self.key(el, &event),
             WindowEvent::CursorMoved { position, .. } => {
                 self.cursor = (position.x as f32, position.y as f32);
                 self.moved(self.cursor.0, self.cursor.1);
@@ -1056,9 +1533,24 @@ fn main() {
     // rendu hors écran (CPU) pour les tests
     if let Some(out) = val("--screenshot") {
         let mut app = App::new(size);
-        if val("--page").as_deref() == Some("info") {
-            app.info = info_rows();
-            app.page = Page::Info;
+        if args.iter().any(|a| a == "--demo") {
+            app.wifi = Some(wifi::demo());
+        }
+        match val("--page").as_deref() {
+            Some("info") => {
+                app.info = info_rows();
+                app.page = Page::Info;
+            }
+            Some("wifi") => app.page = Page::Wifi,
+            Some(p @ ("wifinet" | "wifipass")) => {
+                let i = if p == "wifinet" { 1 } else { 3 };
+                app.sel = app.wifi.as_ref().and_then(|st| st.nets.get(i).cloned());
+                if p == "wifipass" {
+                    app.pass = "hunter2hunter2".into();
+                }
+                app.page = Page::WifiNet;
+            }
+            _ => {}
         }
         let mut g = Gfx::new_cpu(size.0, size.1);
         g.begin(size.0, size.1);
@@ -1079,6 +1571,7 @@ fn main() {
     };
     el.set_control_flow(ControlFlow::Wait);
     let mut app = App::new(size);
+    app.job("", wifi::Action::None, false); // état du Wi-Fi pour la carte de la page principale
     if let Err(e) = el.run_app(&mut app) {
         eprintln!("settings : {e}");
         std::process::exit(1);
