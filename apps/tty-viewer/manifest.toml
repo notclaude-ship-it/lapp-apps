@@ -1,8 +1,9 @@
 manifest_version = 1
 id          = "com.moi.tty-viewer"
 name        = "TTY Viewer"
-version     = "1.0.2"
+version     = "1.0.3"
 arch        = "aarch64"
 exec        = "bin/tty-viewer"
 icon        = "icon.png"
-permissions = ["display", "system", "files", "storage"]
+permissions = ["display", "storage", "commands"]
+commands    = ["cat", "sudo"]

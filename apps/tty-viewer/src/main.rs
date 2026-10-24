@@ -1,6 +1,66 @@
 use lapp_sdk::prelude::*;
 use std::fs;
 
+// ---- Lecture des consoles de l'hôte via la permission "commands" -------------------------------------
+// Le bac à sable monte /host en `nodev` et son /dev est minimal : aucun /dev/vcs<N> n'y est ouvrable.
+// On demande donc au courtier de l'hôte d'exécuter `cat /dev/vcs<N>` (puis `sudo -n cat` si l'utilisateur
+// de la session n'a pas le droit de lecture). Protocole (u32 big-endian) :
+//   requête : argc, (len, octets) x argc, len_stdin, stdin
+//   réponse : code i32, len_out, out, len_err, err
+
+fn broker_run(args: &[&str]) -> Result<(i32, Vec<u8>, Vec<u8>), String> {
+    use std::io::{Read, Write};
+    use std::os::unix::net::UnixStream;
+
+    let sock = std::env::var("LAPP_COMMANDS_SOCKET").unwrap_or_else(|_| "/run/lapp/commands.sock".into());
+    if !std::path::Path::new(&sock).exists() {
+        // développement sur PC (hors bac à sable) : on lance la commande directement
+        let o = std::process::Command::new(args[0])
+            .args(&args[1..])
+            .output()
+            .map_err(|e| format!("{}: {}", args[0], e))?;
+        return Ok((o.status.code().unwrap_or(-1), o.stdout, o.stderr));
+    }
+    let mut st = UnixStream::connect(&sock).map_err(|e| format!("courtier injoignable ({}): {}", sock, e))?;
+    st.set_read_timeout(Some(std::time::Duration::from_secs(100))).ok();
+    let mut req = Vec::new();
+    req.extend_from_slice(&(args.len() as u32).to_be_bytes());
+    for a in args {
+        req.extend_from_slice(&(a.len() as u32).to_be_bytes());
+        req.extend_from_slice(a.as_bytes());
+    }
+    req.extend_from_slice(&0u32.to_be_bytes());
+    st.write_all(&req).map_err(|e| e.to_string())?;
+
+    let mut buf = Vec::new();
+    st.read_to_end(&mut buf).map_err(|e| e.to_string())?;
+    let u32at = |o: usize| -> Result<usize, String> {
+        buf.get(o..o + 4)
+            .map(|b| u32::from_be_bytes([b[0], b[1], b[2], b[3]]) as usize)
+            .ok_or_else(|| "réponse du courtier tronquée".to_string())
+    };
+    let code = u32at(0)? as u32 as i32;
+    let lo = u32at(4)?;
+    let out = buf.get(8..8 + lo).ok_or("réponse du courtier tronquée")?.to_vec();
+    let le = u32at(8 + lo)?;
+    let err = buf.get(12 + lo..12 + lo + le).ok_or("réponse du courtier tronquée")?.to_vec();
+    Ok((code, out, err))
+}
+
+fn read_console(path: &str) -> Result<Vec<u8>, String> {
+    let (code, out, err) = broker_run(&["cat", path])?;
+    if code == 0 {
+        return Ok(out);
+    }
+    let (code2, out2, err2) = broker_run(&["sudo", "-n", "cat", path])?;
+    if code2 == 0 {
+        return Ok(out2);
+    }
+    let msg = |e: &[u8]| String::from_utf8_lossy(e).trim().to_string();
+    Err(format!("cat: {} / sudo: {}", msg(&err), msg(&err2)))
+}
+
+
 struct TtyViewer {
     selected: u8,
     content: String,
@@ -21,14 +81,13 @@ impl TtyViewer {
     }
 
     fn load(&mut self) {
-        // Le contenu d'une console texte de l'hôte se lit via /dev/vcs<N> (copie de l'écran),
-        // pas via /dev/tty<N> (le périphérique du terminal). /dev/vcs = console active (tty0).
+        // /dev/vcs<N> = copie texte de l'écran de la console N (/dev/vcs = console active, tty0).
         let path = if self.selected == 0 {
-            "/host/dev/vcs".to_string()
+            "/dev/vcs".to_string()
         } else {
-            format!("/host/dev/vcs{}", self.selected)
+            format!("/dev/vcs{}", self.selected)
         };
-        match fs::read(&path) {
+        match read_console(&path) {
             Ok(b) => {
                 let s = String::from_utf8_lossy(&b);
                 let s = s.lines().map(|l| l.trim_end()).collect::<Vec<_>>().join("\n");
