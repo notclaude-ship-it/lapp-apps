@@ -21,10 +21,24 @@ impl TtyViewer {
     }
 
     fn load(&mut self) {
-        let path = format!("/host/dev/tty{}", self.selected);
-        match fs::read_to_string(&path) {
-            Ok(s) if !s.is_empty() => self.content = s,
-            Ok(_) => self.content = format!("(tty{} est vide)", self.selected),
+        // Le contenu d'une console texte de l'hôte se lit via /dev/vcs<N> (copie de l'écran),
+        // pas via /dev/tty<N> (le périphérique du terminal). /dev/vcs = console active (tty0).
+        let path = if self.selected == 0 {
+            "/host/dev/vcs".to_string()
+        } else {
+            format!("/host/dev/vcs{}", self.selected)
+        };
+        match fs::read(&path) {
+            Ok(b) => {
+                let s = String::from_utf8_lossy(&b);
+                let s = s.lines().map(|l| l.trim_end()).collect::<Vec<_>>().join("\n");
+                let s = s.trim_end();
+                if s.is_empty() {
+                    self.content = format!("(tty{} est vide)", self.selected);
+                } else {
+                    self.content = s.to_string();
+                }
+            }
             Err(e) => self.content = format!("Impossible de lire {}: {}", path, e),
         }
         self.content_scroll.jump_to(0.0);
