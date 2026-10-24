@@ -21,7 +21,7 @@ impl TtyViewer {
     }
 
     fn load(&mut self) {
-        let path = format!("/dev/tty{}", self.selected);
+        let path = format!("/host/dev/tty{}", self.selected);
         match fs::read_to_string(&path) {
             Ok(s) if !s.is_empty() => self.content = s,
             Ok(_) => self.content = format!("(tty{} est vide)", self.selected),
