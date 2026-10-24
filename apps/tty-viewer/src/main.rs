@@ -1,71 +1,19 @@
 use lapp_sdk::prelude::*;
-use std::fs;
 
-// ---- Lecture des consoles de l'hôte via la permission "commands" -------------------------------------
-// Le bac à sable monte /host en `nodev` et son /dev est minimal : aucun /dev/vcs<N> n'y est ouvrable.
-// On demande donc au courtier de l'hôte d'exécuter `cat /dev/vcs<N>` (puis `sudo -n cat` si l'utilisateur
-// de la session n'a pas le droit de lecture). Protocole (u32 big-endian) :
-//   requête : argc, (len, octets) x argc, len_stdin, stdin
-//   réponse : code i32, len_out, out, len_err, err
-
-fn broker_run(args: &[&str]) -> Result<(i32, Vec<u8>, Vec<u8>), String> {
-    use std::io::{Read, Write};
-    use std::os::unix::net::UnixStream;
-
-    let sock = std::env::var("LAPP_COMMANDS_SOCKET").unwrap_or_else(|_| "/run/lapp/commands.sock".into());
-    if !std::path::Path::new(&sock).exists() {
-        // développement sur PC (hors bac à sable) : on lance la commande directement
-        let o = std::process::Command::new(args[0])
-            .args(&args[1..])
-            .output()
-            .map_err(|e| format!("{}: {}", args[0], e))?;
-        return Ok((o.status.code().unwrap_or(-1), o.stdout, o.stderr));
-    }
-    let mut st = UnixStream::connect(&sock).map_err(|e| format!("courtier injoignable ({}): {}", sock, e))?;
-    st.set_read_timeout(Some(std::time::Duration::from_secs(100))).ok();
-    let mut req = Vec::new();
-    req.extend_from_slice(&(args.len() as u32).to_be_bytes());
-    for a in args {
-        req.extend_from_slice(&(a.len() as u32).to_be_bytes());
-        req.extend_from_slice(a.as_bytes());
-    }
-    req.extend_from_slice(&0u32.to_be_bytes());
-    st.write_all(&req).map_err(|e| e.to_string())?;
-
-    let mut buf = Vec::new();
-    st.read_to_end(&mut buf).map_err(|e| e.to_string())?;
-    let u32at = |o: usize| -> Result<usize, String> {
-        buf.get(o..o + 4)
-            .map(|b| u32::from_be_bytes([b[0], b[1], b[2], b[3]]) as usize)
-            .ok_or_else(|| "réponse du courtier tronquée".to_string())
-    };
-    let code = u32at(0)? as u32 as i32;
-    let lo = u32at(4)?;
-    let out = buf.get(8..8 + lo).ok_or("réponse du courtier tronquée")?.to_vec();
-    let le = u32at(8 + lo)?;
-    let err = buf.get(12 + lo..12 + lo + le).ok_or("réponse du courtier tronquée")?.to_vec();
-    Ok((code, out, err))
-}
-
-fn read_console(path: &str) -> Result<Vec<u8>, String> {
-    let (code, out, err) = broker_run(&["cat", path])?;
-    if code == 0 {
-        return Ok(out);
-    }
-    let (code2, out2, err2) = broker_run(&["sudo", "-n", "cat", path])?;
-    if code2 == 0 {
-        return Ok(out2);
-    }
-    let msg = |e: &[u8]| String::from_utf8_lossy(e).trim().to_string();
-    Err(format!("cat: {} / sudo: {}", msg(&err), msg(&err2)))
-}
-
+mod hostcmd;
+mod sudo;
 
 struct TtyViewer {
     selected: u8,
     content: String,
     list_scroll: Scroller,
     content_scroll: Scroller,
+    /// `Some(refus)` : sudo demande un mot de passe (`refus` = celui qu'on avait été refusé)
+    need_pw: Option<bool>,
+    pw: String,
+    show_pw: bool,
+    /// le clavier virtuel a été demandé pour la page du mot de passe
+    kb_asked: bool,
 }
 
 impl TtyViewer {
@@ -75,6 +23,10 @@ impl TtyViewer {
             content: String::new(),
             list_scroll: Scroller::new(),
             content_scroll: Scroller::new(),
+            need_pw: None,
+            pw: String::new(),
+            show_pw: false,
+            kb_asked: false,
         };
         app.load();
         app
@@ -82,25 +34,110 @@ impl TtyViewer {
 
     fn load(&mut self) {
         // /dev/vcs<N> = copie texte de l'écran de la console N (/dev/vcs = console active, tty0).
+        // Le bac à sable n'y a pas accès : la lecture passe par le courtier de commandes de l'hôte.
         let path = if self.selected == 0 {
             "/dev/vcs".to_string()
         } else {
             format!("/dev/vcs{}", self.selected)
         };
-        match read_console(&path) {
-            Ok(b) => {
-                let s = String::from_utf8_lossy(&b);
-                let s = s.lines().map(|l| l.trim_end()).collect::<Vec<_>>().join("\n");
+        // `cat` direct d'abord (marche si l'utilisateur est dans le groupe tty) ; sinon `sudo cat`.
+        let res = match hostcmd::run(&["cat", &path], "") {
+            Ok(o) if o.code == 0 => Ok(o),
+            _ => sudo::run(&["cat", &path]),
+        };
+        match res {
+            Ok(o) if o.code == 0 => {
+                self.need_pw = None;
+                let s: String = o.out.lines().map(|l| l.trim_end()).collect::<Vec<_>>().join("\n");
                 let s = s.trim_end();
-                if s.is_empty() {
-                    self.content = format!("(tty{} est vide)", self.selected);
-                } else {
-                    self.content = s.to_string();
-                }
+                self.content = if s.is_empty() { format!("(tty{} est vide)", self.selected) } else { s.to_string() };
             }
-            Err(e) => self.content = format!("Impossible de lire {}: {}", path, e),
+            Ok(o) => {
+                self.need_pw = None;
+                self.content = format!("Impossible de lire {}: {}", path, o.err.trim());
+            }
+            Err(e) if e == sudo::NEEDED || e == sudo::WRONG => {
+                // mot de passe sudo à saisir : la page de saisie s'affiche
+                self.need_pw = Some(e == sudo::WRONG);
+                self.pw.clear();
+                self.kb_asked = false;
+                self.content.clear();
+            }
+            Err(e) => {
+                self.need_pw = None;
+                self.content = format!("Impossible de lire {}: {}", path, e);
+            }
         }
         self.content_scroll.jump_to(0.0);
+    }
+
+    /// Zones de la page du mot de passe : (champ, bouton Afficher/Masquer, bouton Valider).
+    fn pw_rects(&self, ctx: &Ctx) -> (Rect, Rect, Rect) {
+        let s = ctx.scale();
+        let (w, _) = ctx.size();
+        let w = w as f32;
+        let top = 44.0 * s;
+        let m = 16.0 * s;
+        let field = Rect::new(m, top + 78.0 * s, w - 2.0 * m, 42.0 * s);
+        let bw = (w - 2.0 * m - 10.0 * s) / 2.0;
+        let y = field.y + field.h + 14.0 * s;
+        (field, Rect::new(m, y, bw, 42.0 * s), Rect::new(m + bw + 10.0 * s, y, bw, 42.0 * s))
+    }
+
+    fn submit_pw(&mut self, ctx: &Ctx) {
+        if self.pw.is_empty() {
+            return;
+        }
+        sudo::set(std::mem::take(&mut self.pw));
+        self.load();
+        if self.need_pw.is_none() {
+            ctx.keyboard(0);
+        } else {
+            ctx.keyboard(1);
+            self.kb_asked = true;
+        }
+        ctx.animate();
+    }
+
+    fn render_pw(&mut self, ctx: &Ctx, g: &mut Gfx, refused: bool) {
+        let s = ctx.scale();
+        let (w, _) = ctx.size();
+        let w = w as f32;
+        let top = ui::header(ctx, g, "TTY Viewer", None).height;
+        if !self.kb_asked {
+            self.kb_asked = true;
+            ctx.keyboard(1);
+        }
+        let (title, tc) = if refused {
+            ("Mot de passe incorrect", ctx.theme.danger)
+        } else {
+            ("Droits administrateur", ctx.theme.text)
+        };
+        let t1 = Text::new(18.0 * s).bold().color(tc).center().max_width(w - 24.0 * s);
+        ctx.text_mid(g, title, w / 2.0, top + 24.0 * s, &t1);
+        let t2 = Text::new(12.0 * s).color(ctx.theme.subtext).center().max_width(w - 24.0 * s);
+        ctx.text_mid(g, "Lire les consoles de l'hôte demande sudo.", w / 2.0, top + 46.0 * s, &t2);
+        ctx.text_mid(g, "Entre le mot de passe sudo de l'appareil.", w / 2.0, top + 62.0 * s, &t2);
+
+        let (field, show, ok) = self.pw_rects(ctx);
+        g.rrect(field.x, field.y, field.w, field.h, 8.0 * s, ctx.theme.surface);
+        g.rrect(field.x, field.y, field.w, 1.0, 0.0, ctx.theme.line);
+        g.rrect(field.x, field.y + field.h - 1.0, field.w, 1.0, 0.0, ctx.theme.line);
+        let (cx, cy) = (field.x + 14.0 * s, field.y + field.h / 2.0);
+        if self.show_pw {
+            let st = Text::new(16.0 * s).mono().color(ctx.theme.text).left().max_width(field.w - 28.0 * s).ellipsis_left();
+            ctx.text_mid(g, &self.pw, cx, cy, &st);
+        } else {
+            let r = 4.0 * s;
+            let step = 14.0 * s;
+            let max = ((field.w - 28.0 * s) / step) as usize;
+            let n = self.pw.chars().count();
+            for i in 0..n.min(max) {
+                g.circle(cx + r + i as f32 * step, cy, r, ctx.theme.text);
+            }
+        }
+        ui::button(ctx, g, show, if self.show_pw { "Masquer" } else { "Afficher" }, ui::ButtonStyle::Secondary, false);
+        ui::button(ctx, g, ok, "Valider", ui::ButtonStyle::Primary, false);
     }
 }
 
@@ -115,6 +152,10 @@ impl App for TtyViewer {
 
     fn render(&mut self, ctx: &Ctx, g: &mut Gfx) {
         g.clear(ctx.theme.bg);
+        if let Some(refused) = self.need_pw {
+            self.render_pw(ctx, g, refused);
+            return;
+        }
         let s = ctx.scale();
         let (w, h) = ctx.size();
         let w = w as f32;
@@ -162,6 +203,36 @@ impl App for TtyViewer {
     }
 
     fn event(&mut self, ctx: &Ctx, ev: Event) {
+        if self.need_pw.is_some() {
+            match ev {
+                Event::Key(Key::Char(c)) => {
+                    self.pw.push(c);
+                    ctx.animate();
+                }
+                Event::Key(Key::Space) => {
+                    self.pw.push(' ');
+                    ctx.animate();
+                }
+                Event::Key(Key::Back) => {
+                    self.pw.pop();
+                    ctx.animate();
+                }
+                Event::Key(Key::Enter) => self.submit_pw(ctx),
+                Event::Tap { x, y } => {
+                    let (field, show, ok) = self.pw_rects(ctx);
+                    if ok.contains(x, y) {
+                        self.submit_pw(ctx);
+                    } else if show.contains(x, y) {
+                        self.show_pw = !self.show_pw;
+                        ctx.animate();
+                    } else if field.contains(x, y) {
+                        ctx.keyboard(1); // réaffiche le clavier s'il a été masqué
+                    }
+                }
+                _ => {}
+            }
+            return;
+        }
         let s = ctx.scale();
         let list_w = 75.0 * s;
         let top = 44.0 * s;
