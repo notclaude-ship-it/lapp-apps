@@ -1,0 +1,12 @@
+manifest_version = 1
+id          = "com.moi.combat"
+name        = "Combat"
+version     = "1.0.0"
+arch        = "aarch64"
+exec        = "bin/combat"
+icon        = "icon.png"
+# display : écran | storage : /data | gpu : OpenGL ES (partage le réseau) | audio | network | files | system | install
+# | desktop | mpris : lecteurs multimédia | input : manettes/claviers | commands : commandes de l'hôte (voir ci-dessous)
+permissions = ["display", "storage", "gpu"]
+# permission "commands" : ajoutez-la à permissions ET listez les commandes autorisées (noms simples ; "*" = toutes)
+# commands = ["nmcli"]
