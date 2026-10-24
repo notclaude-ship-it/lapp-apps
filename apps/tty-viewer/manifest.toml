@@ -1,0 +1,8 @@
+manifest_version = 1
+id          = "com.moi.tty-viewer"
+name        = "TTY Viewer"
+version     = "1.0.0"
+arch        = "aarch64"
+exec        = "bin/tty-viewer"
+icon        = "icon.png"
+permissions = ["display", "system", "files"]
