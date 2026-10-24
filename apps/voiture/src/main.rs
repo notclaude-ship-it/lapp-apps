@@ -156,7 +156,7 @@ impl Game {
         if self.state != State::Playing {
             return;
         }
-        let n = (self.lane as i32 + dir).clamp(0, LANES as i32 - 1);
+        let n = (self.lane as i32 - dir).clamp(0, LANES as i32 - 1);
         self.lane = n as usize;
     }
 
@@ -354,8 +354,8 @@ impl App for Game {
     fn event(&mut self, ctx: &Ctx, ev: Event) {
         let w = ctx.width();
         match ev {
-            Event::Key(Key::Left) | Event::Key(Key::Char('q')) | Event::Key(Key::Char('a')) => self.steer(-1),
-            Event::Key(Key::Right) | Event::Key(Key::Char('d')) => self.steer(1),
+            Event::Key(Key::Left) | Event::Key(Key::Char('q')) | Event::Key(Key::Char('a')) => self.steer(1),
+            Event::Key(Key::Right) | Event::Key(Key::Char('d')) => self.steer(-1),
             Event::Key(Key::Space) | Event::Key(Key::Enter) => match self.state {
                 State::Ready => self.start(),
                 State::Dead if self.dead_t > 0.5 => self.start(),
@@ -363,7 +363,7 @@ impl App for Game {
             },
             Event::Down { x, y } => match self.state {
                 State::Ready => self.start(),
-                State::Playing => self.steer(if x < w / 2.0 { -1 } else { 1 }),
+                State::Playing => self.steer(if x < w / 2.0 { 1 } else { -1 }),
                 State::Dead => {
                     if self.dead_t > 0.5 && self.button_rect(ctx).contains(x, y) {
                         self.btn_pressed = true;

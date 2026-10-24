@@ -1,7 +1,7 @@
 manifest_version = 1
 id          = "com.moi.voiture"
 name        = "Voiture"
-version     = "1.0.0"
+version     = "1.0.1"
 arch        = "aarch64"
 exec        = "bin/voiture"
 icon        = "icon.png"
